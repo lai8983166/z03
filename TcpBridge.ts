@@ -1,6 +1,7 @@
-const WebSocket = require("ws");
-const dgram = require("dgram");
-const EventEmitter = require("events");
+// @ts-nocheck: 见 server.ts 顶部说明（后端 .ts 过渡，类型收紧留后续 change）。
+import WebSocket from "ws";
+import dgram from "dgram";
+import { EventEmitter } from "events";
 
 /**
  * @typedef {Object} CmdDef
@@ -450,4 +451,4 @@ class TcpBridge extends EventEmitter {
     }
 }
 
-module.exports = TcpBridge;
+export default TcpBridge;

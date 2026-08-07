@@ -1,8 +1,4 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "module": "CommonJS",
-    "moduleResolution": "Node"
-  },
-  "include": ["config.js", "server.js", "TcpBridge.js", "js/Udp.js"]
+  "include": ["server.ts", "TcpBridge.ts", "js/Udp.ts", "config.ts"]
 }

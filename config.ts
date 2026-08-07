@@ -1,14 +1,12 @@
 // 配置读取与校验。
 //
-// server.js 是 CommonJS 且直接用 `node server.js` 运行（无构建步骤），
-// 因此本模块用 .js + JSDoc 类型；后续 change 把后端整体迁移到 TS 时
-// 再连同 server 一并转为 config.ts。
+// 后端由 tsx 运行（见 server.ts），本模块用 ESM import/export。
 //
 // 错误处理：loadConfig 在文件缺失 / 解析失败 / 关键字段校验失败时抛出
-// Error。server 顶层不 catch，未捕获异常会使 node 进程以非 0 退出，
+// Error。server 顶层不 catch，未捕获异常会使进程以非 0 退出，
 // 行为上等价于 process.exit(1)，但可被单元测试用 expect().toThrow() 捕获。
 
-const fs = require("fs");
+import fs from "fs";
 
 /**
  * @typedef {Object} BridgeConfig
@@ -144,4 +142,4 @@ function loadConfig(configPath) {
   return /** @type {Config} */ (parsed);
 }
 
-module.exports = { loadConfig, validateConfig };
+export { loadConfig, validateConfig };

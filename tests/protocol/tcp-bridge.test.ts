@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-// TcpBridge.js 是 CommonJS（module.exports = TcpBridge），vitest/vite 按 CJS interop 取 default
-import TcpBridge from "../../TcpBridge.js";
+import TcpBridge from "../../TcpBridge";
 
 // 构造符合协议的包头 Buffer。
 // 注意 handleData 的路由读取：AR = msg[13]（line 278），cmd1 = msg[14]，cmd2 = msg[15]，
@@ -20,7 +19,7 @@ function makePacket(
 }
 
 describe("TcpBridge.handleData", () => {
-  let bridge: InstanceType<typeof TcpBridge>;
+  let bridge: any;
   let events: { event: string; data: unknown }[];
 
   beforeEach(() => {

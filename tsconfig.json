@@ -14,11 +14,9 @@
     "types": ["node"]
   },
   "include": [
-    "*.ts",
+    "vite.config.ts",
+    "vitest.config.ts",
     "tests/**/*.ts",
-    "config.js",
-    "TcpBridge.js",
-    "js/Udp.js",
     "js/CommandBuilder.js",
     "js/BinaryTableHelper.js"
   ],

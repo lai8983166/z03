@@ -3,17 +3,18 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // UdpBridge 构造函数会调 dgram.createSocket 创建 UDP socket，必须 mock dgram
 // 才能保证测试不打开真实网络资源（_handleMessage 本身是纯解析，不碰 socket）。
 vi.mock("dgram", () => ({
-  createSocket: vi.fn(() => ({
-    on: vi.fn(),
-    bind: vi.fn(),
-    send: vi.fn(),
-    close: vi.fn(),
-    address: vi.fn(() => ({ address: "0.0.0.0", port: 0 })),
-  })),
+  default: {
+    createSocket: vi.fn(() => ({
+      on: vi.fn(),
+      bind: vi.fn(),
+      send: vi.fn(),
+      close: vi.fn(),
+      address: vi.fn(() => ({ address: "0.0.0.0", port: 0 })),
+    })),
+  },
 }));
 
-// Udp.js 是 CommonJS（module.exports = UdpBridge），import 取 default
-import UdpBridge from "../../js/Udp.js";
+import UdpBridge from "../../js/Udp";
 
 // 构造符合 UdpBridge 协议的包头：[0]=0x13 [1]=0x02，[14]=cmd1 [15]=cmd2。
 // SJCJ_trigger 分支检查 msg[12]==0x01 && msg[13]==0x02 && msg[14]==0x03。
@@ -36,7 +37,7 @@ function makePkt(opts: { cmd1?: number; cmd2?: number; payload?: number[]; trigg
 const RINFO = { address: "10.0.0.1", port: 30041 };
 
 describe("UdpBridge._handleMessage", () => {
-  let bridge: InstanceType<typeof UdpBridge>;
+  let bridge: any;
   let events: { event: string; data: unknown }[];
 
   beforeEach(() => {

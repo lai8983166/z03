@@ -1,5 +1,6 @@
-const dgram = require("dgram");
-const EventEmitter = require("events");
+// @ts-nocheck: 见 server.ts 顶部说明（后端 .ts 过渡，类型收紧留后续 change）。
+import dgram from "dgram";
+import { EventEmitter } from "events";
 
 /**
  * @typedef {Object} CmdDef
@@ -194,4 +195,4 @@ class UdpBridge extends EventEmitter {
   }
 }
 
-module.exports = UdpBridge;
+export default UdpBridge;

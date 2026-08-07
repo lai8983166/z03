@@ -1,13 +1,16 @@
-const { spawn } = require("child_process");
-const http = require("http");
-const WebSocket = require("ws");
-const path = require("path");
-const fs = require("fs");
-const ExcelJS = require("exceljs");
-const UdpBridge = require("./js/Udp.js");
-const TcpBridge = require("./TcpBridge.js");
-const { SerialPort } = require("serialport");
-const { loadConfig } = require("./config.js");
+// @ts-nocheck: 后端 .ts 由 .js 迁移而来，含大量动态 class 属性等 JS 模式，
+// tsc 强制检查会报数以百计的类型错。本 change 聚焦"打通 tsx 运行能力"，
+// 类型收紧留给后续 change（3b 配合模块拆分补声明时逐个移除本指令）。
+import { spawn } from "child_process";
+import http from "http";
+import WebSocket from "ws";
+import path from "path";
+import fs from "fs";
+import ExcelJS from "exceljs";
+import UdpBridge from "./js/Udp";
+import TcpBridge from "./TcpBridge";
+import { SerialPort } from "serialport";
+import { loadConfig } from "./config";
 
 // ==================== 配置 ====================
 // 所有运行时参数集中在 config.json，由 config.js 的 loadConfig 读取并校验。
