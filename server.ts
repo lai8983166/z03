@@ -12,6 +12,7 @@ import TcpBridge from "./TcpBridge";
 import { SerialPort } from "serialport";
 import { loadConfig } from "./config";
 import { createWsBus } from "./ws-bus";
+import { createVideo } from "./video";
 
 // ==================== 配置 ====================
 // 所有运行时参数集中在 config.json，由 config.js 的 loadConfig 读取并校验。
@@ -529,189 +530,37 @@ const SRC_HEIGHT = cfg.video.srcHeight;
 const BYTES_PER_PIXEL_16BIT = cfg.video.bytesPerPixel16bit;
 const FRAME_SIZE_16BIT = SRC_HEIGHT * SRC_WIDTH * BYTES_PER_PIXEL_16BIT;
 const FRAME_SIZE_8BIT = SRC_HEIGHT * SRC_WIDTH;
-let ffmpegProcess = null;
-let isStreamingVideo = false;
-let shouldRetry = true;
-let isConnecting = false;
-
-/**
- * 启动 FFmpeg 进程，将 RTSP 流转为原始帧数据
- */
-function startVideoStream() {
-  if (ffmpegProcess) return;
-
-  // 只有不在尝试连接时，才打印日志
-  if (!isConnecting) {
-    console.log("🎬 正在等待/连接 RTSP 视频流...");
-    isConnecting = true;
-  }
-
-  //需要重试
-  shouldRetry = true;
-
-  const ffmpegCmd = cfg.video.ffmpegPath;
-
-  // FFmpeg 命令：RTSP -> 原始灰度帧 (128x128)
-  ffmpegProcess = spawn(ffmpegCmd, [
-    "-rtsp_transport",
-    "tcp",
-    "-probesize",
-    "32", // 探测包大小 (32字节)
-    "-analyzeduration",
-    "0", // 不分析时长，直接解码
-    "-fflags",
-    "nobuffer", // 禁用缓冲
-    "-flags",
-    "low_delay", // 低延迟
-    "-i",
-    RTSP_URL,
-
-    // 滤镜：强制 full range 不压缩灰度
-    "-vf",
-    "scale=128:128:in_range=full:out_range=full,format=gray16le",
-
-    "-f",
-    "rawvideo",
-    "-pix_fmt",
-    "gray16le",
-    "-r",
-    "50",
-    "-",
-  ]);
-
-  // 根据像素格式计算帧大小
-  const bytesPerPixel = 1; // gray=1
-  const frameSize = SRC_WIDTH * SRC_HEIGHT * bytesPerPixel;
-  let frameBuffer = Buffer.alloc(0);
-
-  ffmpegProcess.stdout.on("data", (data) => {
-    frameBuffer = Buffer.concat([frameBuffer, data]);
-    while (frameBuffer.length >= FRAME_SIZE_16BIT) {
-      const frame16bit = frameBuffer.subarray(0, FRAME_SIZE_16BIT);
-      frameBuffer = frameBuffer.subarray(FRAME_SIZE_16BIT);
-      if (isSavingVideo && videoStream) {
-        videoStream.write(frame16bit);
-        videoFrameCount++;
-      }
-      const frame8bit = convert16to8bit(frame16bit);
-
-      broadcastVideoFrame(frame8bit, SRC_WIDTH, SRC_HEIGHT);
+// ==================== RTSP 视频流（由 video 模块管理）====================
+// video 模块封装红外 + 二值化两条 ffmpeg 流；onFrame16bit 回调解耦数据保存
+// （isSavingVideo/videoStream/videoFrameCount 仍由 server.ts 管理，3b-3 迁）。
+const video = createVideo({
+  rtspUrl: cfg.video.rtspUrl,
+  binarizedRtspUrl: cfg.video.binarizedRtspUrl,
+  ffmpegPath: cfg.video.ffmpegPath,
+  srcWidth: cfg.video.srcWidth,
+  srcHeight: cfg.video.srcHeight,
+  bytesPerPixel16bit: cfg.video.bytesPerPixel16bit,
+  wsBus,
+  onFrame16bit: (frame) => {
+    if (isSavingVideo && videoStream) {
+      videoStream.write(frame);
+      videoFrameCount++;
     }
-  });
+  },
+  getBinarizedInvert: () => binarizedInvert,
+  getIsStreamingBinarized: () => isStreamingBinarizedVideo,
+});
 
-  ffmpegProcess.stdout.once("data", () => {
-    console.log(" RTSP 视频流已连接！画面传输中...");
-    isConnecting = false;
-  });
-
-  ffmpegProcess.stderr.on("data", (data) => {
-    const msg = data.toString();
-    // 只有在非重试刷屏模式下，才显示部分错误，防止日志爆炸
-    if (!isConnecting && (msg.includes("Error") || msg.includes("error"))) {
-      // console.log(`FFmpeg Error: ${msg.trim()}`);
-    }
-  });
-
-  ffmpegProcess.on("close", (code) => {
-    ffmpegProcess = null;
-
-    if (shouldRetry) {
-      // ⭐ 静默重试，不再疯狂打印日志
-      // 每 1000ms 尝试一次重连
-      setTimeout(() => {
-        startVideoStream();
-      }, 100);
-    } else {
-      console.log("🛑 FFmpeg 已手动停止，不再重连。");
-      isConnecting = false;
-    }
-  });
-
-  ffmpegProcess.on("error", (err) => {
-    // 启动失败也重试
-    if (shouldRetry) {
-      setTimeout(() => startVideoStream(), 1000);
-    }
-  });
-}
-
-function convert16to8bit(frame16) {
-  const pixelCount = SRC_HEIGHT * SRC_WIDTH;
-  const frame8 = Buffer.alloc(pixelCount);
-
-  let min = 65535;
-  let max = 0;
-  for (let i = 0; i < pixelCount; i++) {
-    const val = frame16.readUInt16LE(i * 2);
-    if (val < min) min = val;
-    if (val > max) max = val;
-  }
-
-  const range = max - min;
-  if (range === 0) {
-    frame8.fill(128);
-  } else {
-    const scale = 255 / range;
-    for (let i = 0; i < pixelCount; i++) {
-      const val = frame16.readUInt16LE(i * 2);
-      frame8[i] = Math.round((val - min) * scale);
-    }
-  }
-  return frame8;
-}
-
-/**
- * 停止视频流
- */
-function stopVideoStream() {
-  shouldRetry = false;
-  isConnecting = false;
-  if (ffmpegProcess) {
-    ffmpegProcess.kill("SIGTERM");
-    ffmpegProcess = null;
-    isStreamingVideo = false;
-    console.log("🛑 视频流已停止");
-  }
-}
-
-/**
- * 广播二进制数据
- */
-function broadcastVideoFrame(frameData, width, height) {
-  // 构造包头: [0x01][Width:2][Height:2][Data...]
-  const header = Buffer.alloc(5);
-  header[0] = 0x01; // 视频帧类型标识
-  header.writeUInt16LE(width, 1);
-  header.writeUInt16LE(height, 3);
-
-  const packet = Buffer.concat([header, frameData]);
-
-  // 保存视频流到文件（只保存原始帧数据，不含包头）
-  /*if (isSavingVideo && videoStream) {
-    // 只写入帧数据（16384字节），不包含包头
-    videoStream.write(frameData);
-    videoFrameCount++;
-  }*/
-
-  // 广播给前端客户端（包含包头）
-  clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(packet);
-    }
-  });
-}
-
-// ⭐ 关键修改：服务器启动后自动启动视频流
+// 服务器启动后自动启动视频流（当前注释，维持遗留"不接入"现状）
 console.log("\n🎥 准备启动 RTSP 视频流监听...");
-// 延迟 2 秒启动，确保其他服务都已就绪
 /*setTimeout(() => {
-  startVideoStream();
+  video.startVideoStream();
 }, 2000);*/
 
 // 关闭时停止视频流
 process.on("SIGINT", () => {
   console.log("\n🛑 Shutting down...");
-  stopVideoStream(); // 👈 新增
+  video.stopVideoStream();
   udpBridge.close();
   udpBridge2.close();
   udpBridge3.close();
@@ -1502,7 +1351,7 @@ function handleJsonControlMessage(data, ws) {
 
       // 如果阈值改变了，需要重启 FFmpeg 进程
       if (needRestart) {
-        restartBinarizedVideoStream();
+        video.restartBinarizedVideoStream();
       }
       break;
 
@@ -1551,11 +1400,11 @@ function handleControlCommand(data) {
       stopSavingHeixiaziExcel();
       break;
     case "START_BINARIZED_STREAM":
-      startBinarizedVideoStream();
+      video.startBinarizedVideoStream();
       isStreamingBinarizedVideo = true;
       break;
     case "STOP_BINARIZED_STREAM":
-      stopBinarizedVideoStream();
+      video.stopBinarizedVideoStream();
       isStreamingBinarizedVideo = false;
       break;
     // ---- 转台串口转发 ----
@@ -1595,162 +1444,15 @@ function writeRecvDataToCsv(buffer) {
   }
 }
 
-// ==================== 第二个 RTSP 视频流（二值化）配置 ====================
-const BINARIZED_RTSP_URL = cfg.video.binarizedRtspUrl;
-//const BINARIZED_RTSP_URL = "rtsp://192.168.10.1:8554/live";
-let ffmpegBinarizedProcess = null;
+// ==================== 二值化流状态（进程由 video 模块管理）====================
+// isStreamingBinarizedVideo / binarizedThreshold / binarizedInvert 由 control 层
+// （handleJsonControlMessage / handleControlCommand）管理；video 通过 getter 读。
 let isStreamingBinarizedVideo = false;
-let shouldRetryBinarized = true;
-let isConnectingBinarized = false;
 let binarizedThreshold = 128; // 二值化阈值
 let binarizedInvert = false; // 是否反转
 
-/**
- * 启动二值化视频流 FFmpeg 进程
- */
-function startBinarizedVideoStream() {
-  if (ffmpegBinarizedProcess) return;
-
-  if (!isConnectingBinarized) {
-    console.log("🎬 正在启动二值化 RTSP 视频流...");
-    isConnectingBinarized = true;
-  }
-
-  shouldRetryBinarized = true;
-  const ffmpegCmd = cfg.video.ffmpegPath;
-
-  // FFmpeg 命令：RTSP -> 二值化灰度帧 (128x128)
-  // 使用 FFmpeg 的 threshold 滤镜进行二值化
-  ffmpegBinarizedProcess = spawn(ffmpegCmd, [
-    "-rtsp_transport",
-    "tcp",
-    "-probesize",
-    "32",
-    "-analyzeduration",
-    "0",
-    "-fflags",
-    "nobuffer",
-    "-flags",
-    "low_delay",
-    "-i",
-    BINARIZED_RTSP_URL,
-
-    // 不做任何处理，直接输出原始灰度图
-    // 二值化处理在前端进行
-    "-vf",
-    "scale=128:128:in_range=full:out_range=full,format=gray",
-
-    "-f",
-    "rawvideo",
-    "-pix_fmt",
-    "gray",
-    "-r",
-    "50",
-    "-",
-  ]);
-
-  const bytesPerPixel = 1;
-  const frameSize = SRC_WIDTH * SRC_HEIGHT * bytesPerPixel;
-  let frameBuffer = Buffer.alloc(0);
-
-  ffmpegBinarizedProcess.stdout.on("data", (data) => {
-    frameBuffer = Buffer.concat([frameBuffer, data]);
-    while (frameBuffer.length >= frameSize) {
-      const frame = frameBuffer.subarray(0, frameSize);
-      frameBuffer = frameBuffer.subarray(frameSize);
-
-      // 如果需要反转，则反转像素值
-      let processedFrame = frame;
-      if (binarizedInvert) {
-        processedFrame = Buffer.alloc(frameSize);
-        for (let i = 0; i < frameSize; i++) {
-          processedFrame[i] = frame[i] === 0 ? 255 : 0;
-        }
-      }
-
-      // 调试日志：记录接收到帧
-      // console.log("📦 二值化帧接收，准备广播");
-      broadcastBinarizedVideoFrame(processedFrame, SRC_WIDTH, SRC_HEIGHT);
-    }
-  });
-
-  ffmpegBinarizedProcess.stdout.once("data", () => {
-    console.log("✅ 二值化 RTSP 视频流已连接！");
-    isConnectingBinarized = false;
-  });
-
-  ffmpegBinarizedProcess.stderr.on("data", (data) => {
-    const msg = data.toString();
-    // 打印所有 FFmpeg 输出，方便调试
-    console.log(`[FFmpeg 二值化流] ${msg.trim()}`);
-  });
-
-  ffmpegBinarizedProcess.on("close", (code) => {
-    ffmpegBinarizedProcess = null;
-
-    if (shouldRetryBinarized) {
-      setTimeout(() => {
-        startBinarizedVideoStream();
-      }, 100);
-    } else {
-      console.log("🛑 二值化 FFmpeg 已手动停止，不再重连。");
-      isConnectingBinarized = false;
-    }
-  });
-
-  ffmpegBinarizedProcess.on("error", (err) => {
-    if (shouldRetryBinarized) {
-      //setTimeout(() => startBinarizedVideoStream(), 1000);
-    }
-  });
-}
-
-/**
- * 停止二值化视频流
- */
-function stopBinarizedVideoStream() {
-  shouldRetryBinarized = false;
-  isConnectingBinarized = false;
-  if (ffmpegBinarizedProcess) {
-    ffmpegBinarizedProcess.kill("SIGTERM");
-    ffmpegBinarizedProcess = null;
-    isStreamingBinarizedVideo = false;
-    console.log("🛑 二值化视频流已停止");
-  }
-}
-
-/**
- * 广播二值化视频帧
- */
-function broadcastBinarizedVideoFrame(frameData, width, height) {
-  // 构造包头: [0x02][Width:2][Height:2][Data...]
-  // 使用 0x02 作为二值化流的类型标识（区别于原始流的 0x01）
-  const header = Buffer.alloc(5);
-  header[0] = 0x02; // 二值化视频帧类型标识
-  header.writeUInt16LE(width, 1);
-  header.writeUInt16LE(height, 3);
-
-  const packet = Buffer.concat([header, frameData]);
-
-  clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(packet);
-    }
-  });
-}
-
-/**
- * 重启二值化视频流（当参数改变时调用）
- */
-function restartBinarizedVideoStream() {
-  const wasRunning = ffmpegBinarizedProcess !== null;
-  stopBinarizedVideoStream();
-  setTimeout(() => {
-    if (wasRunning || isStreamingBinarizedVideo) {
-      startBinarizedVideoStream();
-    }
-  }, 200);
-}
+// 二值化视频流函数（startBinarizedVideoStream / stopBinarizedVideoStream /
+// broadcastBinarizedVideoFrame / restartBinarizedVideoStream）已迁 video 模块。
 
 // 监听来自前端的二值化参数设置消息
 // 在 ws.on("message") 中添加对二值化参数的处理
