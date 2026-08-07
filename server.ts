@@ -11,6 +11,7 @@ import UdpBridge from "./js/Udp";
 import TcpBridge from "./TcpBridge";
 import { SerialPort } from "serialport";
 import { loadConfig } from "./config";
+import { createWsBus } from "./ws-bus";
 
 // ==================== 配置 ====================
 // 所有运行时参数集中在 config.json，由 config.js 的 loadConfig 读取并校验。
@@ -78,21 +79,9 @@ server.listen(HTTP_PORT, "0.0.0.0", () => {
   console.log(`\n🌐 HTTP Server: http://localhost:${HTTP_PORT}/`);
 });
 
-// ==================== WebSocket 服务器 ====================
-const wss = new WebSocket.Server({
-  port: WS_PORT,
-  host: "0.0.0.0",
-});
-console.log(`🔌 WebSocket Server: ws://localhost:${WS_PORT}`);
-
-// ==================== 图像上传专用 WebSocket 服务器 ====================
-const wssImg = new WebSocket.Server({
-  port: WS_PORT_IMG,
-  host: "0.0.0.0",
-});
-console.log(`🔌 ImageUpload WebSocket Server: ws://localhost:${WS_PORT_IMG}`);
-
-const imgClients = new Set();
+// ==================== WebSocket 服务器（由 ws-bus 创建）====================
+const wsBus = createWsBus(WS_PORT, WS_PORT_IMG);
+const { wss, wssImg, clients, imgClients } = wsBus;
 wssImg.on("connection", (ws) => {
   console.log("\n✅ ImageUpload WebSocket client connected");
   imgClients.add(ws);
@@ -125,26 +114,8 @@ wssImg.on("connection", (ws) => {
   });
 });
 
-/** 向所有图像上传 WS 客户端广播消息 */
-function broadcastImg(message) {
-  const msg = JSON.stringify(message);
-  imgClients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(msg);
-    }
-  });
-}
+// broadcastImg / broadcastBinary 由 ws-bus 提供（见 wsBus.broadcastImg / broadcastBinary）
 
-// 直接广播二进制 Buffer，跳过 JSON 序列化
-function broadcastBinary(buffer) {
-  clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(buffer);
-    }
-  });
-}
-
-const clients = new Set();
 let udpReady = false;
 wss.on("connection", (ws) => {
   console.log("\n✅ WebSocket client connected");
@@ -298,7 +269,7 @@ udpBridge.on("ready", () => {
   console.log("✅ UDP ready");
   console.log("   准备广播 udp_ready 消息...");
   udpReady = true;
-  broadcast({
+  wsBus.broadcast({
     type: "udp_ready",
     message: "UDP connection established",
   });
@@ -307,7 +278,7 @@ udpBridge.on("ready", () => {
 
 udpBridge.on("rs485", (info) => {
   //console.log(`[Server] RS485 事件: flag=${info.flag}, name=${info.name}`);
-  broadcast({
+  wsBus.broadcast({
     type: "rs485",
     flag: info.flag,
     name: info.name,
@@ -321,7 +292,7 @@ udpBridge.on("heixiazi", (info) => {
   const packet = Buffer.allocUnsafe(1 + info.data.length);
   packet[0] = 0x03;
   info.data.copy(packet, 1);
-  broadcastBinary(packet);
+  wsBus.broadcastBinary(packet);
 });
 
 udpBridge.on("YC", (info) => {
@@ -329,30 +300,30 @@ udpBridge.on("YC", (info) => {
   const packet = Buffer.allocUnsafe(1 + info.data.length);
   packet[0] = 0x04;
   info.data.copy(packet, 1);
-  broadcastBinary(packet);
+  wsBus.broadcastBinary(packet);
 });
 
 udpBridge.on("laser_data", (data) => {
-  broadcast({
+  wsBus.broadcast({
     type: "laser_data",
     data: data.toString("hex"),
   });
 });
 
 udpBridge.on("chart_update", (data) => {
-  broadcast({
+  wsBus.broadcast({
     type: "chart_update",
     data: data.toString("hex"),
   });
 });
 
 udpBridge.on("SJCJ_trigger", () => {
-  broadcast({ type: "SJCJ_trigger" });
+  wsBus.broadcast({ type: "SJCJ_trigger" });
 });
 
 udpBridge.on("received", (info) => {
   console.log("📩 UDP 收到数据，准备广播...");
-  broadcast({
+  wsBus.broadcast({
     type: "udp_received",
     data: info.data.toString("hex"),
     from: info.from,
@@ -361,7 +332,7 @@ udpBridge.on("received", (info) => {
 
 udpBridge.on("sent", (buffer) => {
   console.log("📤 UDP 发送成功，准备广播...");
-  broadcast({
+  wsBus.broadcast({
     type: "udp_sent",
     length: buffer.length,
   });
@@ -369,7 +340,7 @@ udpBridge.on("sent", (buffer) => {
 
 udpBridge.on("error", (err) => {
   console.error("❌ UDP 错误:", err.message);
-  broadcast({
+  wsBus.broadcast({
     type: "udp_error",
     error: err.message,
   });
@@ -390,11 +361,11 @@ const udpBridge2 = USE_TCP2 ? new TcpBridge() : new UdpBridge();
 
 udpBridge2.on("ready", () => {
   console.log("✅ Bridge2 ready");
-  broadcast({ type: "udp2_ready", message: "Bridge2 connected" });
+  wsBus.broadcast({ type: "udp2_ready", message: "Bridge2 connected" });
 });
 
 udpBridge2.on("rs485", (info) => {
-  broadcast({ type: "rs485_2", flag: info.flag, name: info.name,
+  wsBus.broadcast({ type: "rs485_2", flag: info.flag, name: info.name,
     data: info.data ? info.data.toString("hex") : null,
     meta: info.meta || null });
 });
@@ -403,18 +374,18 @@ udpBridge2.on("heixiazi", (info) => {
   const packet = Buffer.allocUnsafe(1 + info.data.length);
   packet[0] = 0x03;
   info.data.copy(packet, 1);
-  broadcastBinary(packet);
+  wsBus.broadcastBinary(packet);
 });
 
 udpBridge2.on("YC", (info) => {
   const packet = Buffer.allocUnsafe(1 + info.data.length);
   packet[0] = 0x04;
   info.data.copy(packet, 1);
-  broadcastBinary(packet);
+  wsBus.broadcastBinary(packet);
 });
 
 udpBridge2.on("laser_data", (data) => {
-  broadcast({ type: "laser_data_2", data: data.toString("hex") });
+  wsBus.broadcast({ type: "laser_data_2", data: data.toString("hex") });
 });
 
 udpBridge2.on("error", (err) => {
@@ -423,7 +394,7 @@ udpBridge2.on("error", (err) => {
 
 // 转台上行 ASCII 帧透传给前端
 udpBridge2.on("raw_text", (text) => {
-  broadcast({ type: "turntable_reply", text });
+  wsBus.broadcast({ type: "turntable_reply", text });
 });
 
 udpBridge2.init(UDP2_LOCAL_IP, UDP2_LOCAL_PORT, UDP2_REMOTE_IP, UDP2_REMOTE_PORT,'udp');
@@ -440,19 +411,19 @@ const udpBridge3 = USE_TCP3 ? new TcpBridge() : new UdpBridge();
 
 udpBridge3.on("ready", () => {
   console.log("✅ Bridge3 ready");
-  broadcastImg({ type: "udp3_ready", message: "Bridge3 connected" });
+  wsBus.broadcastImg({ type: "udp3_ready", message: "Bridge3 connected" });
 });
 
 udpBridge3.on("heixiazi", (info) => {
   const packet = Buffer.allocUnsafe(1 + info.data.length);
   packet[0] = 0x03;
   info.data.copy(packet, 1);
-  broadcastBinary(packet);
+  wsBus.broadcastBinary(packet);
 });
 
 udpBridge3.on("error", (err) => {
   console.error("❌ Bridge3 错误:", err.message);
-  broadcastImg({ type: "udp3_error", error: err.message });
+  wsBus.broadcastImg({ type: "udp3_error", error: err.message });
 });
 
 udpBridge3.init(UDP3_LOCAL_IP, UDP3_LOCAL_PORT, UDP3_REMOTE_IP, UDP3_REMOTE_PORT,'udp');
@@ -479,11 +450,11 @@ function initTurntableSerial() {
   turntableSerial.open((err) => {
     if (err) {
       console.error(`❌ 转台串口 ${TURNTABLE_SERIAL_PORT} 打开失败:`, err.message);
-      broadcast({ type: "turntable_serial_error", message: err.message });
+      wsBus.broadcast({ type: "turntable_serial_error", message: err.message });
       return;
     }
     console.log(`✅ 转台串口 ${TURNTABLE_SERIAL_PORT} 已打开，波特率 ${TURNTABLE_BAUD_RATE}`);
-    broadcast({ type: "turntable_serial_ready", port: TURNTABLE_SERIAL_PORT });
+    wsBus.broadcast({ type: "turntable_serial_ready", port: TURNTABLE_SERIAL_PORT });
   });
 
   turntableSerial.on("data", (chunk) => {
@@ -498,19 +469,19 @@ function initTurntableSerial() {
       if (!text) continue;
       console.log("[Turntable Serial] 收到:", text);
       if (text.startsWith("$")) {
-        broadcast({ type: "turntable_reply", text });
+        wsBus.broadcast({ type: "turntable_reply", text });
       }
     }
   });
 
   turntableSerial.on("error", (err) => {
     console.error("❌ 转台串口错误:", err.message);
-    broadcast({ type: "turntable_serial_error", message: err.message });
+    wsBus.broadcast({ type: "turntable_serial_error", message: err.message });
   });
 
   turntableSerial.on("close", () => {
     console.warn("⚠️ 转台串口已关闭");
-    broadcast({ type: "turntable_serial_closed" });
+    wsBus.broadcast({ type: "turntable_serial_closed" });
   });
 }
 
@@ -535,15 +506,7 @@ function sendToTurntableSerial(buf) {
 // 启动串口（如需禁用可注释此行）
 initTurntableSerial();
 
-// ==================== 广播函数 ====================
-function broadcast(message) {
-  const msg = JSON.stringify(message);
-  clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(msg);
-    }
-  });
-}
+// broadcast 由 ws-bus 提供（见 wsBus.broadcast）
 
 // ====================关闭 ====================
 process.on("SIGINT", () => {
@@ -551,8 +514,7 @@ process.on("SIGINT", () => {
   udpBridge.close();
   udpBridge2.close();
   udpBridge3.close();
-  wss.close();
-  wssImg.close();
+  wsBus.close();
   server.close();
   process.exit(0);
 });
@@ -753,8 +715,7 @@ process.on("SIGINT", () => {
   udpBridge.close();
   udpBridge2.close();
   udpBridge3.close();
-  wss.close();
-  wssImg.close();
+  wsBus.close();
   server.close();
   process.exit(0);
 });
@@ -842,7 +803,7 @@ function startSavingSJCJ(dynamicHeaderB, dynamicHeaderA) {
   isSavingSJCJ = true;
   console.log(`💾 [Server] 开始录制A/B帧 → ${_sjcjFilename}`);
 
-  broadcast({
+  wsBus.broadcast({
     type: "SAVE_STATUS",
     status: "started",
     path: _sjcjFilename,
@@ -885,10 +846,10 @@ async function stopSavingSJCJ() {
 
     await wb.xlsx.writeFile(filename);
     console.log(`✅ [Server] 已保存: ${filename}`);
-    broadcast({ type: "SAVE_STATUS", status: "stopped", path: filename });
+    wsBus.broadcast({ type: "SAVE_STATUS", status: "stopped", path: filename });
   } catch (err) {
     console.error("❌ 写入 xlsx 失败:", err);
-    broadcast({ type: "SAVE_STATUS", status: "error", msg: err.message });
+    wsBus.broadcast({ type: "SAVE_STATUS", status: "error", msg: err.message });
   }
 }
 
@@ -926,7 +887,7 @@ function startSavingVideo(filePath) {
     console.log(`[Server] 开始录制视频流: ${filename}`);
 
     // 通知前端状态更新
-    broadcast({
+    wsBus.broadcast({
       type: "SAVE_STATUS",
       saveType: "video",
       status: "started",
@@ -934,7 +895,7 @@ function startSavingVideo(filePath) {
     });
   } catch (err) {
     console.error("启动视频录制失败:", err);
-    broadcast({
+    wsBus.broadcast({
       type: "SAVE_STATUS",
       saveType: "video",
       status: "error",
@@ -957,7 +918,7 @@ function stopSavingVideo() {
   }
 
   console.log(`[Server] 停止录制视频流 (共保存 ${videoFrameCount} 帧)`);
-  broadcast({
+  wsBus.broadcast({
     type: "SAVE_STATUS",
     saveType: "video",
     status: "stopped",
@@ -999,7 +960,7 @@ function startSavingJG(filePath) {
     isSavingJG = true;
     console.log(`[Server] 开始录制激光数据: ${filename}`);
 
-    broadcast({
+    wsBus.broadcast({
       type: "SAVE_STATUS",
       saveType: "jg",
       status: "started",
@@ -1007,7 +968,7 @@ function startSavingJG(filePath) {
     });
   } catch (err) {
     console.error("启动激光数据录制失败:", err);
-    broadcast({
+    wsBus.broadcast({
       type: "SAVE_STATUS",
       saveType: "jg",
       status: "error",
@@ -1030,7 +991,7 @@ function stopSavingJG() {
   }
 
   console.log(`[Server] 停止录制激光数据 (共保存 ${jgFrameCount} 帧)`);
-  broadcast({
+  wsBus.broadcast({
     type: "SAVE_STATUS",
     saveType: "jg",
     status: "stopped",
@@ -1067,10 +1028,10 @@ function startSavingBlackbox(filePath) {
     isSavingBlackbox = true;
     console.log(`[Server] 开始录制黑匣子流: ${filename}`);
 
-    broadcast({ type: "SAVE_STATUS", saveType: "blackbox", status: "started", path: filename });
+    wsBus.broadcast({ type: "SAVE_STATUS", saveType: "blackbox", status: "started", path: filename });
   } catch (err) {
     console.error("启动黑匣子保存失败:", err);
-    broadcast({ type: "SAVE_STATUS", saveType: "blackbox", status: "error", msg: err.message });
+    wsBus.broadcast({ type: "SAVE_STATUS", saveType: "blackbox", status: "error", msg: err.message });
   }
 }
 
@@ -1088,7 +1049,7 @@ function stopSavingBlackbox() {
   }
 
   console.log(`[Server] 停止录制黑匣子流 (共保存 ${blackboxFrameCount} 帧)`);
-  broadcast({
+  wsBus.broadcast({
     type: "SAVE_STATUS",
     saveType: "blackbox",
     status: "stopped",
@@ -1125,10 +1086,10 @@ function startSavingYC(filePath) {
     isSavingYC = true;
     console.log(`[Server] 开始录制YC数据: ${filename}`);
 
-    broadcast({ type: "SAVE_STATUS", saveType: "yc", status: "started", path: filename });
+    wsBus.broadcast({ type: "SAVE_STATUS", saveType: "yc", status: "started", path: filename });
   } catch (err) {
     console.error("启动YC数据录制失败:", err);
-    broadcast({ type: "SAVE_STATUS", saveType: "yc", status: "error", msg: err.message });
+    wsBus.broadcast({ type: "SAVE_STATUS", saveType: "yc", status: "error", msg: err.message });
   }
 }
 
@@ -1146,7 +1107,7 @@ function stopSavingYC() {
   }
 
   console.log(`[Server] 停止录制YC数据 (共保存 ${ycFrameCount} 帧)`);
-  broadcast({
+  wsBus.broadcast({
     type: "SAVE_STATUS",
     saveType: "yc",
     status: "stopped",
@@ -1180,10 +1141,10 @@ function startSavingHeixiaziExcel(filePath) {
     isSavingHeixiaziExcel = true;
 
     console.log(`[Server] 开始录制黑匣子遥测 Excel: ${filename}`);
-    broadcast({ type: "SAVE_STATUS", saveType: "heixiazi_excel", status: "started", path: filename });
+    wsBus.broadcast({ type: "SAVE_STATUS", saveType: "heixiazi_excel", status: "started", path: filename });
   } catch (err) {
     console.error("启动黑匣子遥测 Excel 录制失败:", err);
-    broadcast({ type: "SAVE_STATUS", saveType: "heixiazi_excel", status: "error", msg: err.message });
+    wsBus.broadcast({ type: "SAVE_STATUS", saveType: "heixiazi_excel", status: "error", msg: err.message });
   }
 }
 
@@ -1226,10 +1187,10 @@ async function stopSavingHeixiaziExcel() {
 
     await wb.xlsx.writeFile(filename);
     console.log(`✅ [Server] 黑匣子遥测 Excel 已保存: ${filename}`);
-    broadcast({ type: "SAVE_STATUS", saveType: "heixiazi_excel", status: "stopped", path: filename });
+    wsBus.broadcast({ type: "SAVE_STATUS", saveType: "heixiazi_excel", status: "stopped", path: filename });
   } catch (err) {
     console.error("❌ 写入黑匣子遥测 Excel 失败:", err);
-    broadcast({ type: "SAVE_STATUS", saveType: "heixiazi_excel", status: "error", msg: err.message });
+    wsBus.broadcast({ type: "SAVE_STATUS", saveType: "heixiazi_excel", status: "error", msg: err.message });
   }
 }
 
@@ -1476,7 +1437,7 @@ function handleJsonControlMessage(data, ws) {
         console.log("[Server] 对话框结果:", filePath);
         if (!filePath) {
           // 用户取消
-          broadcast({ type: "SAVE_STATUS", saveType: data.saveType, status: "cancelled" });
+          wsBus.broadcast({ type: "SAVE_STATUS", saveType: data.saveType, status: "cancelled" });
           return;
         }
         rememberSaveDialogDir(data.saveType, filePath);
