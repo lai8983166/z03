@@ -7,28 +7,33 @@ const ExcelJS = require("exceljs");
 const UdpBridge = require("./js/Udp.js");
 const TcpBridge = require("./TcpBridge.js");
 const { SerialPort } = require("serialport");
+const { loadConfig } = require("./config.js");
 
 // ==================== 配置 ====================
-const HTTP_PORT = 8080;
-const WS_PORT = 8081;
-const WS_PORT_IMG = 8082; // 图像上传专用 WebSocket 端口
+// 所有运行时参数集中在 config.json，由 config.js 的 loadConfig 读取并校验。
+// 值校准自原硬编码（行为不变），结构模板见 config.example.json。
+const cfg = loadConfig("./config.json");
 
-const USE_TCP = true;
+const HTTP_PORT = cfg.http.port;
+const WS_PORT = cfg.ws.port;
+const WS_PORT_IMG = cfg.ws.portImg; // 图像上传专用 WebSocket 端口
+
+const USE_TCP = cfg.bridges[0].useTcp;
 
 // UDP 配置
 //const UDP_LOCAL_IP = "0.0.0.0"; // 监听所有网卡
 //const UDP_LOCAL_PORT = 6000; // 本地端口
-const UDP_LOCAL_IP = "192.168.0.20";
-const UDP_LOCAL_PORT = 30041; // 本地端口
+const UDP_LOCAL_IP = cfg.bridges[0].localIp;
+const UDP_LOCAL_PORT = cfg.bridges[0].localPort; // 本地端口
 
-const UDP_REMOTE_IP = "192.168.0.170"; // 目标设备 IP
+const UDP_REMOTE_IP = cfg.bridges[0].remoteIp; // 目标设备 IP
 //const UDP_REMOTE_IP = "127.0.0.1";
 //const UDP_REMOTE_PORT = 5000; // 目标设备端口
-const UDP_REMOTE_PORT =30041; // 目标设备端口
+const UDP_REMOTE_PORT = cfg.bridges[0].remotePort; // 目标设备端口
 // UDP_REMOTE_PORT = 61440; // 目标设备端口
 //const IMAGE_UPLOAD_REMOTE_PORT = 30041;
-const IMAGE_UPLOAD_REMOTE_PORT = 61440;
-const IMAGE_UPLOAD_REMOTE_IP = "192.168.10.1";
+const IMAGE_UPLOAD_REMOTE_PORT = cfg.imageUpload.remotePort;
+const IMAGE_UPLOAD_REMOTE_IP = cfg.imageUpload.remoteIp;
 
 // ==================== HTTP 服务器====================
 const server = http.createServer((req, res) => {
@@ -372,11 +377,11 @@ udpBridge.init(UDP_LOCAL_IP, UDP_LOCAL_PORT, UDP_REMOTE_IP, UDP_REMOTE_PORT,'udp
 
 // --- Bridge 2 ---
 // 按需修改以下参数，USE_TCP2=true 用 TcpBridge，false 用 UdpBridge
-const USE_TCP2 = true;
-const UDP2_LOCAL_IP   = "192.168.0.20";
-const UDP2_LOCAL_PORT = 30042;               // 本地监听端口（UDP 模式需要与 Bridge 1 不同）
-const UDP2_REMOTE_IP  = "192.168.0.170";      // 第二个设备的 IP
-const UDP2_REMOTE_PORT = 61440;              // 第二个设备的端口
+const USE_TCP2 = cfg.bridges[1].useTcp;
+const UDP2_LOCAL_IP   = cfg.bridges[1].localIp;
+const UDP2_LOCAL_PORT = cfg.bridges[1].localPort;               // 本地监听端口（UDP 模式需要与 Bridge 1 不同）
+const UDP2_REMOTE_IP  = cfg.bridges[1].remoteIp;      // 第二个设备的 IP
+const UDP2_REMOTE_PORT = cfg.bridges[1].remotePort;              // 第二个设备的端口
 
 const udpBridge2 = USE_TCP2 ? new TcpBridge() : new UdpBridge();
 
@@ -422,11 +427,11 @@ udpBridge2.init(UDP2_LOCAL_IP, UDP2_LOCAL_PORT, UDP2_REMOTE_IP, UDP2_REMOTE_PORT
 
 // --- Bridge 3 ---
 // 按需修改以下参数，USE_TCP3=true 用 TcpBridge，false 用 UdpBridge
-const USE_TCP3 = true;
-const UDP3_LOCAL_IP   = "192.168.0.20";
-const UDP3_LOCAL_PORT = 30040;               // 本地监听端口
-const UDP3_REMOTE_IP  = "192.168.0.170";      // 第三个设备的 IP
-const UDP3_REMOTE_PORT = 61440;              // 第三个设备的端口
+const USE_TCP3 = cfg.bridges[2].useTcp;
+const UDP3_LOCAL_IP   = cfg.bridges[2].localIp;
+const UDP3_LOCAL_PORT = cfg.bridges[2].localPort;               // 本地监听端口
+const UDP3_REMOTE_IP  = cfg.bridges[2].remoteIp;      // 第三个设备的 IP
+const UDP3_REMOTE_PORT = cfg.bridges[2].remotePort;              // 第三个设备的端口
 
 const udpBridge3 = USE_TCP3 ? new TcpBridge() : new UdpBridge();
 
@@ -451,8 +456,8 @@ udpBridge3.init(UDP3_LOCAL_IP, UDP3_LOCAL_PORT, UDP3_REMOTE_IP, UDP3_REMOTE_PORT
 
 // ==================== 转台串口通信 ====================
 // 串口号可在运行时通过前端界面动态修改（发送 SET_TURNTABLE_PORT 消息）
-let TURNTABLE_SERIAL_PORT = "COM7";     // ← 可通过前端界面实时修改
-const TURNTABLE_BAUD_RATE = 115200;     // ← 根据实际波特率修改
+let TURNTABLE_SERIAL_PORT = cfg.turntable.serialPort;     // ← 可通过前端界面实时修改
+const TURNTABLE_BAUD_RATE = cfg.turntable.baudRate;     // ← 根据实际波特率修改
 
 let turntableSerial = null;
 let turntableSerialBuf = "";            // 用于拼接不完整的 ASCII 行
@@ -553,10 +558,10 @@ console.log("\n📋 Server ready. Press Ctrl+C to stop.\n");
 
 // ==================== RTSP 视频流配置 ====================
 //const RTSP_URL = "rtsp://localhost:8554/live";
-const RTSP_URL = "rtsp://192.168.10.1:8554/live";
-const SRC_WIDTH = 128; // 原始分辨率
-const SRC_HEIGHT = 128;
-const BYTES_PER_PIXEL_16BIT = 2;
+const RTSP_URL = cfg.video.rtspUrl;
+const SRC_WIDTH = cfg.video.srcWidth; // 原始分辨率
+const SRC_HEIGHT = cfg.video.srcHeight;
+const BYTES_PER_PIXEL_16BIT = cfg.video.bytesPerPixel16bit;
 const FRAME_SIZE_16BIT = SRC_HEIGHT * SRC_WIDTH * BYTES_PER_PIXEL_16BIT;
 const FRAME_SIZE_8BIT = SRC_HEIGHT * SRC_WIDTH;
 let ffmpegProcess = null;
@@ -579,7 +584,7 @@ function startVideoStream() {
   //需要重试
   shouldRetry = true;
 
-  const ffmpegCmd = "ffmpeg";
+  const ffmpegCmd = cfg.video.ffmpegPath;
 
   // FFmpeg 命令：RTSP -> 原始灰度帧 (128x128)
   ffmpegProcess = spawn(ffmpegCmd, [
@@ -790,7 +795,7 @@ let _heixiaziExcelHeader = [];  // 表头
 let _heixiaziExcelFilename = "";
 
 // 准备保存目录
-const DATA_DIR = path.join(__dirname, "data");
+const DATA_DIR = path.join(__dirname, cfg.dataDir);
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
@@ -1627,7 +1632,7 @@ function writeRecvDataToCsv(buffer) {
 }
 
 // ==================== 第二个 RTSP 视频流（二值化）配置 ====================
-const BINARIZED_RTSP_URL = "rtsp://admin:1A2b3c4d5e@192.168.10.1:18554/live";
+const BINARIZED_RTSP_URL = cfg.video.binarizedRtspUrl;
 //const BINARIZED_RTSP_URL = "rtsp://192.168.10.1:8554/live";
 let ffmpegBinarizedProcess = null;
 let isStreamingBinarizedVideo = false;
@@ -1648,7 +1653,7 @@ function startBinarizedVideoStream() {
   }
 
   shouldRetryBinarized = true;
-  const ffmpegCmd = "ffmpeg";
+  const ffmpegCmd = cfg.video.ffmpegPath;
 
   // FFmpeg 命令：RTSP -> 二值化灰度帧 (128x128)
   // 使用 FFmpeg 的 threshold 滤镜进行二值化

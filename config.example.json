@@ -1,0 +1,20 @@
+{
+  "http": { "port": 8080 },
+  "ws": { "port": 8081, "portImg": 8082 },
+  "imageUpload": { "remoteIp": "192.168.10.1", "remotePort": 61440 },
+  "bridges": [
+    { "useTcp": true, "localIp": "192.168.0.20", "localPort": 30041, "remoteIp": "192.168.0.170", "remotePort": 30041 },
+    { "useTcp": true, "localIp": "192.168.0.20", "localPort": 30042, "remoteIp": "192.168.0.170", "remotePort": 61440 },
+    { "useTcp": true, "localIp": "192.168.0.20", "localPort": 30040, "remoteIp": "192.168.0.170", "remotePort": 61440 }
+  ],
+  "turntable": { "serialPort": "COM7", "baudRate": 115200 },
+  "video": {
+    "rtspUrl": "rtsp://192.168.10.1:8554/live",
+    "binarizedRtspUrl": "rtsp://<user>:<password>@192.168.10.1:18554/live",
+    "ffmpegPath": "ffmpeg",
+    "srcWidth": 128,
+    "srcHeight": 128,
+    "bytesPerPixel16bit": 2
+  },
+  "dataDir": "data"
+}

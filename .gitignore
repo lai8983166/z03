@@ -10,7 +10,7 @@ logs/
 *.log.*
 
 # ============ 环境与本地配置（包含 IP/端口等本地信息）============
-# 如需保留默认 config.json，请注释掉下一行
+# config.json 含本地 IP/端口/凭据，不入库；config.example.json 是模板，需入库
 config.json
 .env
 .env.*

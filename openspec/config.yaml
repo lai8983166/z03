@@ -1,0 +1,30 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+# Example:
+#   context: |
+#     Tech stack: TypeScript, React, Node.js
+#     We use conventional commits
+#     Domain: e-commerce platform
+context: |
+  Tech stack: Node.js (serialport, ws, exceljs), 原生前端 (HTML/CSS/JS)
+  Domain: 两轴台远程串口通讯
+
+  Conventions:
+    - 所有 markdown 文档（proposal / specs / design / tasks 等）一律使用中文撰写
+    - 测试一律使用 mock：禁止在测试中绑定真实端口、连接真实 IP、打开真实串口或硬件；网络 / 串口 / 子进程 / 文件系统等外部依赖必须通过 mock 隔离
+    - 禁止修改 index.html、style.css 以及任何 JS 文件中的样式代码（element.style.* 赋值、内联样式逻辑、CSS 类名操作等）；重构只允许改类型与结构，样式行为必须逐字保持
+    - 遗留/弃用代码（典型如 ffmpeg 与 RTSP 视频流相关逻辑，以及 TcpBridge.js 中已注释的 base64/HexString 调试代码）保留并随重构一并 TS 化；保持其当前调用关系与启用状态不变——既不删除、不新增调用、不特意接入主流程，也不主动断开其现有调用；内部逻辑逐字不动
+    - apply 阶段按场景套用项目已安装的 eric-* skill（.claude/skills 与 .codex/skills 下）：eric-javascript 管包管理与 TS 工程脚手架、eric-quality-control 管质量门（tsc/lint/test）、eric-writing-tests 管测试写法、eric-backend 管后端改动、eric-grill 用于计划/边界模糊时梳理、eric-review 作为 git 提交前的自查；当 skill 规则与用户硬约束（如"不随便引入依赖""不改样式""遗留代码不接入"）冲突时，以用户约束为准，并在对应 change 的 design/tasks 中显式记录该权衡
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
