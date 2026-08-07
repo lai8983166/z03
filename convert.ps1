@@ -1,0 +1,1 @@
+$word = New-Object -ComObject Word.Application; $word.Visible = $false; $doc = $word.Documents.Open('D:\新建文件夹 (2)\dist\app\两轴台远程串口通讯标准协议20170210(公开).doc'); $doc.SaveAs([ref]'D:\新建文件夹 (2)\dist\app\protocol.txt', [ref]2); $doc.Close(); $word.Quit()

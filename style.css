@@ -1,0 +1,771 @@
+* {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: "Microsoft YaHei", "SimHei", sans-serif;
+        font-size: 12px;
+        background: #f0f0f0;
+      }
+      .main-window {
+        width: 100%;
+        
+        min-height: 981px;
+        background: #f0f0f0;
+      }
+      .central-widget {
+        display: flex;
+        padding: 11px;
+        gap: 6px;
+        max-width: 100vw; 
+        overflow-x: hidden; 
+      }
+      /* 左侧区域固定宽度 */
+    .central-widget > .v-layout:first-child {
+  flex-shrink: 0; /* 不压缩 */
+  width: auto;
+}
+
+/* 右侧指令部分自适应剩余空间 */
+.central-widget > .group-box.flex-1 {
+  /*flex: 1 1 0;*/
+  min-width: 0; /* 关键：允许压缩到比内容更小 */
+  
+}
+/* Tab Widget 容器 */
+.tab-widget {
+  width: 100%;
+  max-width: 100%;
+  
+}
+      .h-layout {
+        display: flex;
+        flex-direction: row;
+        gap: 6px;
+      }
+      .v-layout {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .group-box {
+        border: 1px solid #999;
+        border-radius: 3px;
+        padding: 10px 5px 5px 5px;
+        margin: 2px;
+        position: relative;
+        background: #f0f0f0;
+      }
+      .group-box-title {
+        position: absolute;
+        top: -8px;
+        left: 10px;
+        background: #f0f0f0;
+        padding: 0 5px;
+        font-size: 12px;
+        z-index: 1;
+      }
+      .widget-384 {
+        width: 384px;
+        height: 384px;
+        border: 1px solid #666;
+        background: #333;
+        flex-shrink: 0;
+      }
+      .widget-220 {
+        width: 220px;
+        height: 220px;
+        border: 1px solid #666;
+        background: #333;
+        flex-shrink: 0;
+      }
+      select,
+      input[type="text"],
+      textarea,
+      button {
+        padding: 3px 5px;
+        border: 1px solid #999;
+        border-radius: 2px;
+        font-size: 12px;
+      }
+      select {
+        width: 100%;
+        background: white;
+      }
+      span{
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+      button {
+        background: #e1e1e1;
+        cursor: pointer;
+        min-height: 23px;
+      }
+      button:hover {
+        background: #d0d0d0;
+      }
+      button:active {
+        background: #c0c0c0;
+      }
+      textarea {
+        resize: none;
+        width: 100%;
+      }
+      .text-edit-30 {
+        height: 20px;
+        max-height: 30px;
+      }
+      .text-edit-80 {
+        height: 80px;
+        max-height: 80px;
+      }
+      .text-edit-40 {
+        height: 35px;
+        max-height: 35px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: white;
+      }
+      table td,
+      table th {
+        border: 1px solid #ccc;
+        padding: 3px 5px;
+        text-align: left;
+        font-size: 11px;
+      }
+      .table-fixed {
+        table-layout: fixed;
+      }
+      .table-equal-col {
+        table-layout: fixed;
+        width: 100%;
+      }
+      .table-equal-col td,
+      .table-equal-col th {
+        width: auto;
+      }
+      .table-6x6 {
+        width: 350px;
+        height: 350px;
+      }
+      .table-6x6 td {
+        width: 58px;
+        height: 58px;
+        text-align: center;
+      }
+      .table-11x11 {
+        width: 500px;
+        height: 500px;
+      }
+      .table-11x11 td {
+        width: 45px;
+        height: 45px;
+        text-align: center;
+        font-size: 10px;
+      }
+      .tab-widget {
+        width: 100%;
+      }
+      .tab-header {
+        display: flex;
+        flex-wrap: wrap;
+        border-bottom: 1px solid #999;
+        background: #e0e0e0;
+        overflow: hidden;
+        flex-wrap: wrap;
+      }
+      .tab-btn {
+        padding: 8px 12px;
+        border: 1px solid #999;
+        border-bottom: none;
+        background: #d0d0d0;
+        cursor: pointer;
+        margin-right: -1px;
+        font-size: 12px;
+        white-space: nowrap;
+        /*flex: 1 1 0; /* 允许按钮被压缩，平均分配空间 */
+        min-width: 0; /* 允许缩小到比内容更小 */
+        /*overflow: hidden; /* 隐藏溢出内容 */
+        text-overflow: ellipsis; /* 文本溢出显示省略号 */
+      }
+      .tab-btn.active {
+        background: #f0f0f0;
+        border-bottom: 1px solid #f0f0f0;
+        margin-bottom: -1px;
+      }
+      .tab-btn:hover:not(.active) {
+        background: #c8c8c8;
+      }
+      .tab-content {
+        display: none;
+        padding: 10px;
+        border: 1px solid #999;
+        border-top: none;
+        background: #f0f0f0;
+        min-height: 600px;
+      }
+      .tab-content.active {
+        display: block;
+      }
+      .slider {
+        width: 100%;
+        margin: 10px 0;
+      }
+      .radio-group label,
+      .checkbox-group label {
+        display: block;
+        margin: 3px 0;
+        cursor: pointer;
+      }
+      input[type="radio"],
+      input[type="checkbox"] {
+        margin-right: 5px;
+      }
+      /* CSZD 3000H：由 label 的 gap 精确控制框与文字间距。 */
+      .cszd-valid-flags label > input[type="checkbox"] {
+        margin: 0;
+      }
+      .cszd3000h-layout {
+        min-width: 0;
+      }
+      .cszd-valid-flag-toolbar {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        margin-right: 24px;
+        padding: 3px 0;
+      }
+      .cszd3000h-project-table {
+        table-layout: fixed;
+        min-width: 760px;
+      }
+      .cszd3000h-project-table th {
+        background: #e8e8e8;
+        text-align: center;
+        font-weight: bold;
+      }
+      .cszd3000h-project-table th:nth-child(1) {
+        width: 170px;
+      }
+      .cszd3000h-project-table th:nth-child(2),
+      .cszd3000h-project-table th:nth-child(3) {
+        width: 45%;
+      }
+      .cszd3000h-project-cell {
+        vertical-align: top;
+        background: #f7f7f7;
+      }
+      .cszd3000h-project-label {
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        font-weight: bold;
+        white-space: normal;
+      }
+      .cszd3000h-project-label input[type="checkbox"] {
+        flex: 0 0 auto;
+        margin-top: 1px;
+      }
+      .cszd3000h-field-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .cszd3000h-field-row {
+        display: grid;
+        grid-template-columns: minmax(145px, 1fr) minmax(90px, 1fr);
+        align-items: center;
+        gap: 6px;
+        min-height: 24px;
+      }
+      .cszd3000h-field-label {
+        word-break: break-all;
+      }
+      .cszd3000h-field-row input[type="number"],
+      .cszd3000h-field-row select {
+        width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
+        text-align: center;
+      }
+      .cszd3000h-recv-value {
+        display: inline-block;
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 20px;
+        padding: 2px 4px;
+        background: #f0f0f0;
+        text-align: center;
+        word-break: break-all;
+      }
+      .cszd3000h-matrix {
+        table-layout: fixed;
+        margin-top: 2px;
+      }
+      .cszd3000h-matrix td {
+        padding: 2px;
+        text-align: center;
+      }
+      .cszd3000h-matrix input,
+      .cszd3000h-matrix span {
+        width: 100%;
+        min-width: 42px;
+        box-sizing: border-box;
+        text-align: center;
+      }
+      .cszd3000h-matrix input {
+        padding: 2px;
+      }
+      #tab-12 {
+        min-height: 0;
+        overflow: visible;
+      }
+      .cszd3000h-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        min-height: 30px;
+      }
+      .cszd3000h-actions {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        flex: 0 0 auto;
+      }
+      .cszd3000h-actions button {
+        padding: 3px 7px;
+        white-space: nowrap;
+      }
+      #cszd3000h-project-table-container {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+      }
+      .cszd3000h-project-section,
+      .cszd3000h-matrix-section {
+        min-width: 0;
+      }
+      .cszd3000h-section-title {
+        padding: 2px 4px;
+        color: #333;
+        font-size: 11px;
+        font-weight: bold;
+      }
+      .cszd3000h-columns-header,
+      .cszd3000h-project-card,
+      .cszd3000h-matrix-card {
+        display: grid;
+        grid-template-columns: 112px minmax(0, 1fr) minmax(0, 1fr);
+        gap: 4px;
+      }
+      .cszd3000h-columns-header {
+        padding: 2px 4px;
+        color: #555;
+        font-size: 10px;
+        font-weight: bold;
+        text-align: center;
+      }
+      .cszd3000h-columns-header span:first-child {
+        text-align: left;
+      }
+      .cszd3000h-project-grid {
+        display: grid;
+        grid-template-columns: repeat(var(--cszd-project-columns), minmax(0, 1fr));
+        gap: 3px;
+        align-items: start;
+      }
+      .cszd3000h-project-card {
+        min-width: 0;
+        border: 1px solid #c8c8c8;
+        border-radius: 2px;
+        background: #fff;
+      }
+      .cszd3000h-project-card-wide {
+        grid-column: span 2;
+      }
+      .cszd3000h-project-card-project,
+      .cszd3000h-project-card-send,
+      .cszd3000h-project-card-recv {
+        min-width: 0;
+        padding: 3px;
+      }
+      .cszd3000h-project-card-project {
+        background: #f3f3f3;
+      }
+      .cszd3000h-project-card-send,
+      .cszd3000h-project-card-recv {
+        background: #fff;
+      }
+      .cszd3000h-card-heading {
+        display: none;
+      }
+      .cszd3000h-field-list {
+        gap: 2px;
+      }
+      .cszd3000h-field-row {
+        grid-template-columns: minmax(64px, 1fr) minmax(48px, 1fr);
+        gap: 3px;
+        min-height: 19px;
+        font-size: 10px;
+      }
+      .cszd3000h-field-row input[type="number"],
+      .cszd3000h-field-row select,
+      .cszd3000h-recv-value {
+        min-height: 18px;
+        padding: 1px 2px;
+        font-size: 10px;
+      }
+      .cszd3000h-compact-field-list {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 2px;
+      }
+      .cszd3000h-compact-field-list .cszd3000h-field-row {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 1px;
+        min-width: 0;
+        min-height: 0;
+      }
+      .cszd3000h-compact-field-list .cszd3000h-field-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .cszd3000h-matrix-card {
+        border: 1px solid #c8c8c8;
+        border-radius: 2px;
+        background: #fff;
+      }
+      .cszd3000h-matrix-card .cszd3000h-project-card-project {
+        display: flex;
+        align-items: flex-start;
+        padding: 4px;
+      }
+      .cszd3000h-matrix-card .cszd3000h-matrix {
+        width: 100%;
+        margin: 0;
+      }
+      .cszd3000h-matrix-card .cszd3000h-matrix td {
+        padding: 1px;
+      }
+      .cszd3000h-matrix-card .cszd3000h-matrix input,
+      .cszd3000h-matrix-card .cszd3000h-matrix span {
+        min-width: 0;
+        min-height: 18px;
+        padding: 1px;
+        font-size: 9px;
+      }
+      .cszd3000h-table-lanes {
+        display: grid;
+        grid-template-columns: repeat(var(--cszd-lane-count), minmax(0, 1fr));
+        align-items: start;
+        gap: 5px;
+        min-width: 0;
+      }
+      .cszd3000h-lane-table {
+        width: 100%;
+        min-width: 0;
+        table-layout: fixed;
+        border-collapse: collapse;
+      }
+      .cszd3000h-lane-table > thead > tr > th,
+      .cszd3000h-lane-table > tbody > tr > td {
+        box-sizing: border-box;
+        min-width: 0;
+        padding: 2px 3px;
+        vertical-align: top;
+        overflow: hidden;
+      }
+      .cszd3000h-lane-table > thead > tr > th {
+        height: 20px;
+        background: #e6e6e6;
+        text-align: center;
+        white-space: nowrap;
+      }
+      .cszd3000h-lane-table > thead > tr > th:nth-child(1),
+      .cszd3000h-lane-table > tbody > tr > td:nth-child(1) {
+        width: 25%;
+      }
+      .cszd3000h-lane-table > thead > tr > th:nth-child(2),
+      .cszd3000h-lane-table > tbody > tr > td:nth-child(2) {
+        width: 50%;
+      }
+      .cszd3000h-lane-table > thead > tr > th:nth-child(3),
+      .cszd3000h-lane-table > tbody > tr > td:nth-child(3) {
+        width: 25%;
+      }
+      .cszd3000h-project-row .cszd3000h-project-column {
+        background: #f5f5f5;
+      }
+      .cszd3000h-project-row .cszd3000h-project-label {
+        align-items: flex-start;
+        gap: 3px;
+        min-width: 0;
+        font-size: 10px;
+        line-height: 16px;
+      }
+      .cszd3000h-send-column .cszd3000h-field-list,
+      .cszd3000h-recv-column .cszd3000h-field-list {
+        display: grid;
+        grid-auto-rows: 20px;
+        gap: 1px;
+        min-width: 0;
+      }
+      .cszd3000h-send-column .cszd3000h-field-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 58px;
+        align-items: center;
+        gap: 2px;
+        min-width: 0;
+        min-height: 20px;
+      }
+      .cszd3000h-send-column .cszd3000h-field-label {
+        display: block;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .cszd3000h-recv-column .cszd3000h-field-row {
+        display: block;
+        min-width: 0;
+        min-height: 20px;
+      }
+      .cszd3000h-recv-column .cszd3000h-field-label {
+        display: none;
+      }
+      .cszd3000h-lane-table input[type="number"],
+      .cszd3000h-lane-table select,
+      .cszd3000h-lane-table .cszd3000h-recv-value {
+        display: block;
+        width: 100%;
+        min-width: 0;
+        height: 19px;
+        min-height: 19px;
+        box-sizing: border-box;
+        padding: 1px 2px;
+        overflow: hidden;
+        font-size: 9px;
+        line-height: 16px;
+        text-align: center;
+      }
+      .cszd3000h-matrix-table > thead > tr > th:nth-child(1),
+      .cszd3000h-matrix-table > tbody > tr > td:nth-child(1) {
+        width: 12%;
+      }
+      .cszd3000h-matrix-table > thead > tr > th:nth-child(2),
+      .cszd3000h-matrix-table > tbody > tr > td:nth-child(2),
+      .cszd3000h-matrix-table > thead > tr > th:nth-child(3),
+      .cszd3000h-matrix-table > tbody > tr > td:nth-child(3) {
+        width: 44%;
+      }
+      .cszd3000h-matrix-table .cszd3000h-matrix td {
+        width: auto;
+        padding: 1px;
+        overflow: visible;
+      }
+      .cszd3000h-matrix-table .cszd3000h-matrix input,
+      .cszd3000h-matrix-table .cszd3000h-matrix span {
+        width: 100%;
+        min-width: 0;
+        height: 18px;
+        min-height: 18px;
+        padding: 1px;
+        font-size: 9px;
+      }
+      .spacer {
+        flex-grow: 1;
+      }
+      .max-w-400 {
+        max-width: 400px;
+      }
+      .grid-layout {
+        display: grid;
+        gap: 10px;
+      }
+      .grid-2col {
+        grid-template-columns: 1fr 1fr;
+      }
+      .text-browser {
+        background: white;
+        border: 1px solid #999;
+        padding: 5px;
+        min-height: 50px;
+        max-width: 334px;
+        overflow: auto;
+      }
+      .menu-bar {
+        height: 23px;
+        background: #f0f0f0;
+        border-bottom: 1px solid #ccc;
+      }
+      .tool-bar {
+        height: 25px;
+        background: #e8e8e8;
+        border-bottom: 1px solid #ccc;
+      }
+      .status-bar {
+        height: 20px;
+        background: #f0f0f0;
+        border-top: 1px solid #ccc;
+        padding: 2px 5px;
+      }
+      .label {
+        padding: 2px 0;
+      }
+      .checkbox-label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 0;
+        cursor: pointer;
+        user-select: none;
+      }
+      .checkbox-label input[type="checkbox"] {
+        width: 14px;
+        height: 14px;
+        margin: 0;
+        cursor: pointer;
+      }
+      /* checkbox 与其 label 处于同一行 */
+      .checkbox-row {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+        padding: 1px 0;
+      }
+      .checkbox-row > .label {
+        flex-shrink: 0;
+        white-space: nowrap;
+        padding: 0;
+        min-width: 6em;
+      }
+      .checkbox-row > .checkbox-label {
+        padding: 0;
+      }
+      .flex-1 {
+        flex: 1;
+      }
+      .flex-2 {
+        flex: 2;
+      }
+      .flex-3 {
+        flex: 3;
+      }
+      .flex-4 {
+        flex: 4;
+      }
+      .flex-5 {
+        flex: 5;
+      }
+      .flex-6 {
+        flex: 6;
+      }
+      .flex-7 {
+        flex: 7;
+      }
+      .mt-10 {
+        margin-top: 10px;
+      }
+      .mb-10 {
+        margin-bottom: 10px;
+      }
+      .p-5 {
+        padding: 5px;
+      }
+      .w-full {
+        width: 100%;
+      }
+      .h-full {
+        height: 100%;
+      }
+      .text-center {
+        text-align: center;
+      }
+      .font-yahei {
+        font-family: "微软雅黑", sans-serif;
+      }
+      .font-10 {
+        font-size: 10pt;
+      }
+      .tab-container {
+    display: flex;
+    align-items: center;
+    background-color: #f0f0f0;
+    border-bottom: 1px solid #ccc;
+    position: relative;
+    width: 100%;
+}
+
+/* 滚动按钮样式 */
+.scroll-btn {
+    background-color: #e0e0e0;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 8px 10px;
+    height: 100%;
+    z-index: 2; /* 确保按钮在 Tab 上层 */
+    color: #333;
+    font-weight: bold;
+    flex-shrink: 0; /* 防止按钮被压缩 */
+}
+
+.scroll-btn:hover {
+    background-color: #d0d0d0;
+    color: #000;
+}
+
+/* Tab 滚动区域 */
+.tab-header {
+    display: flex;
+    overflow-x: auto;      /* 允许横向滚动 */
+    white-space: nowrap;   /* 禁止换行 */
+    scroll-behavior: smooth; /* 平滑滚动 */
+    flex-grow: 1;          /* 占据剩余空间 */
+    background-color: transparent; /* 去除原有背景 */
+    
+    /* 隐藏滚动条 (Chrome, Safari, Edge) */
+    -webkit-overflow-scrolling: touch;
+}
+
+.tab-header::-webkit-scrollbar {
+    display: none;
+}
+
+/* 隐藏滚动条 (Firefox) */
+.tab-header {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+}
+
+/* Tab 按钮样式微调 */
+.tab-btn {
+    padding: 8px 15px;
+    border: none;
+    border-right: 1px solid #ccc;
+    background: none;
+    cursor: pointer;
+    font-size: 12px;
+    white-space: nowrap; /* 确保文字不换行 */
+    flex-shrink: 0;      /* 确保 Tab 不会被压缩 */
+}
+
+.tab-btn.active {
+    background-color: #fff;
+    border-bottom: 2px solid #0078d7;
+    font-weight: bold;
+}
+
+.tab-btn:hover {
+    background-color: #e6e6e6;
+}
