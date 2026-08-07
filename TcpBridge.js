@@ -2,6 +2,15 @@ const WebSocket = require("ws");
 const dgram = require("dgram");
 const EventEmitter = require("events");
 
+/**
+ * @typedef {Object} CmdDef
+ * @property {number} cmd1 - 命令字低位
+ * @property {number} cmd2 - 命令字高位
+ * @property {number} flag - 路由标识（对应前端 DataHandler 的 switch case）
+ * @property {number} len - 期望数据体长度（字节）
+ */
+
+/** @type {{ [name: string]: CmdDef }} */
 const CMD_54 = {
     FJYJZ: { cmd1: 0x00, cmd2: 0x20, flag: 0, len: 1 }, // 非均匀校正 2000H
     FJYJZ_0020: { cmd1: 0x20, cmd2: 0x00, flag: 27, len: 1 }, // 非均匀校正 0020H
@@ -48,10 +57,19 @@ const CMD_4A = {
 const CODE_UPLOAD_6000H_AR = new Set([0xa0, 0x68, 0x32, 0x77, 0x55, 0x56]);
 const CODE_UPLOAD_6000H_CO = 0x6000;
 
+/** @type {number} 6000H 代码上传计数（connectWS 收消息时递增，调试用） */
 let upload_count_6000h=0;
+/** @type {boolean} heixiazi（黑匣子）协议状态标志，由 handleData 维护 */
 let heixiazi_flag = false;
+/** @type {boolean} YC 遥测协议状态标志 */
 let yc_flag=false;
 
+/**
+ * UDP / WebSocket 双模桥接器：根据 mode 选择 bindUDP 或 connectWS 建立
+ * transport，把收到的字节流交给 handleData 解析并 emit 协议事件；
+ * sendPacket 为统一发送出口。当前 server.js 用 USE_TCP=true 实例化本类
+ * 作为三路 bridge 的 transport（UdpBridge 是其 UDP-only 备选，未启用）。
+ */
 class TcpBridge extends EventEmitter {
     constructor() {
         super();
@@ -195,6 +213,18 @@ class TcpBridge extends EventEmitter {
 
     }
 
+    /**
+     * 解析一条来自 UDP/WS 的原始报文，按协议分发为 rs485 / YC / heixiazi /
+     * chart_update / laser_data / rs485(CODE_UPLOAD_6000H) / raw_text 等事件。
+     *
+     * 本方法是纯解析逻辑（通过 this.emit 输出），不直接读写 socket——
+     * 单元测试通过构造 `new TcpBridge()` + 监听 emit + 喂构造 Buffer 验证，
+     * 不需要调用 init/bindUDP/connectWS。
+     *
+     * @param {Buffer | Uint8Array} msg 原始报文字节（要求长度 >= 16、头 0x13 0x02）
+     * @param {number} [port] 来源端口（用于区分 localPort==30042 的 YC 分支）
+     * @returns {void}
+     */
     handleData(msg,port) {
         //console.log(
         //    `[RECV]handleData received ${data.length} bytes from ${data.address}:${data.port}`,

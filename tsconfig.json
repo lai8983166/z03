@@ -13,6 +13,14 @@
     "isolatedModules": true,
     "types": ["node"]
   },
-  "include": ["*.ts", "tests/**/*.ts", "config.js"],
+  "include": [
+    "*.ts",
+    "tests/**/*.ts",
+    "config.js",
+    "TcpBridge.js",
+    "js/Udp.js",
+    "js/CommandBuilder.js",
+    "js/BinaryTableHelper.js"
+  ],
   "exclude": ["node_modules"]
 }

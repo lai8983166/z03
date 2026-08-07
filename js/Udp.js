@@ -1,6 +1,15 @@
 const dgram = require("dgram");
 const EventEmitter = require("events");
 
+/**
+ * @typedef {Object} CmdDef
+ * @property {number} cmd1 - 命令字低位
+ * @property {number} cmd2 - 命令字高位
+ * @property {number} flag - 路由标识
+ * @property {number} len - 期望数据体长度（字节）
+ */
+
+/** @type {{ [name: string]: CmdDef }} */
 const CMD = {
   WAKE: { cmd1: 0x01, cmd2: 0x00, flag: 0, len: 1 }, // 唤醒 0001H
   SLEEP: { cmd1: 0x04, cmd2: 0x00, flag: 1, len: 1 }, // 休眠 0004H
@@ -26,6 +35,11 @@ const CMD = {
 
 let bufffer = new Array();
 
+/**
+ * UDP-only 桥接器：绑定本地 UDP 端口，把收到的字节流交给 _handleMessage
+ * 解析并 emit 协议事件。当前 server.js 用 USE_TCP=true 选 TcpBridge，
+ * 本类未被实例化（遗留备选），随协议层补类型注解，调用关系不变。
+ */
 class UdpBridge extends EventEmitter {
   constructor() {
     super();
@@ -110,6 +124,15 @@ class UdpBridge extends EventEmitter {
 
   /**
    * 内部处理接收到的消息
+   */
+  /**
+   * 解析一条 UDP 收到的原始报文并 emit 协议事件（rs485 / chart_update /
+   * laser_data / SJCJ_trigger）。本方法是纯解析逻辑，不读写 socket——
+   * 单元测试通过构造 `new UdpBridge()` + 监听 emit + 喂构造 Buffer 验证。
+   *
+   * @param {Buffer | Uint8Array} msg 原始报文字节（长度 >= 16、头 0x13 0x02）
+   * @param {{ address: string, port: number }} rinfo 来源信息
+   * @returns {void}
    */
   _handleMessage(msg, rinfo) {
     // 1. 基础校验 (12字节的规定)

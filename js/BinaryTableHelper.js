@@ -1,9 +1,12 @@
 /**
- *  解析 _loc.csv 定义内存布局
- *  维护二进制缓冲区 (ArrayBuffer)
- *  处理 数据类型转换、精度缩放 (Scale) 和 大小端 (Endian)
+ * 解析 _loc.csv 定义内存布局，维护二进制缓冲区 (ArrayBuffer)，
+ * 处理数据类型转换、精度缩放 (Scale) 和大小端 (Endian)。
  */
 
+/**
+ * 数据类型枚举。注意：parseLocData 在类型字符串无法识别时会把原始
+ * 字符串赋给 MetaItem.type，因此 type 字段实际为 string（如实描述当前行为）。
+ */
 const DataType = {
   UINT8: "UINT8",
   INT8: "INT8",
@@ -17,9 +20,26 @@ const DataType = {
   NOTUSE: "NOTUSE",
 };
 
+/**
+ * @typedef {Object} MetaItem
+ * @property {number} index - CSV 中的序号
+ * @property {number} row - 来源行号
+ * @property {number} col - 来源列号
+ * @property {string} name - 字段名
+ * @property {string} type - DataType 的某个值，或未识别的原始类型字符串
+ * @property {number} scale - 物理值缩放（0 表示不缩放）
+ * @property {number} byteWidth - 该字段字节宽度
+ * @property {number} offset - 在 buffer 中的字节偏移
+ */
+
+/**
+ * 按 _loc.csv 定义维护一块二进制缓冲区，提供按 index/name 的读写、
+ * 表格双向同步、scale/endian 换算。DOM 相关方法（readCell/updateAllToTable 等）
+ * 依赖浏览器 document，不在本 change 单元测试范围。
+ */
 class BinaryTableHelper {
   constructor() {
-    // 结构: { index, row, col, type, scale, byteWidth, offset }
+    /** @type {Map<number, MetaItem>} 按 index 存储字段定义 */
     this.metaData = new Map();
 
     this.buffer = null;
@@ -654,6 +674,11 @@ class BinaryTableHelper {
   }
 }
 
+/**
+ * 管理多个协议的 BinaryTableHelper 实例。init() 并发 fetch 所有 _loc.csv
+ * 并解析；get() 按协议名取出 helper。模块底部导出单例。
+ * 注意：init 依赖 fetch，不在本 change 单元测试范围。
+ */
 class PacketManager {
   constructor() {
     /** @type {Object.<string, BinaryTableHelper>} */
