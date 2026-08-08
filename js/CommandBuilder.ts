@@ -12,14 +12,9 @@
  * [14]    Cmd Low    (命令字低位)
  * [15]    Cmd High   (命令字高位)
  * [16...] Payload    (数据体)
- *
- * @param {number} cmdByte1 - 命令字低位
- * @param {number} cmdByte2 - 命令字高位
- * @param {Uint8Array|Array} payload - 数据体
- * @returns {Uint8Array} - 组装好的二进制数据包
  */
-export function buildPacket(cmdByte1, cmdByte2, payload = []) {
-  let payloadData;
+export function buildPacket(cmdByte1: number, cmdByte2: number, payload: Uint8Array | number[] = []): Uint8Array {
+  let payloadData: Uint8Array;
   if (payload instanceof Uint8Array) {
     payloadData = payload;
   } else {
@@ -64,10 +59,8 @@ export function buildPacket(cmdByte1, cmdByte2, payload = []) {
 /**
  * 辅助工具：将 Uint8Array 转为 Hex 字符串
  * 用于通过 WebSocket 发送 JSON
- * @param {Uint8Array} buffer
- * @returns {string}
  */
-export function bufferToHex(buffer) {
+export function bufferToHex(buffer: Uint8Array): string {
   return Array.from(buffer)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");

@@ -14,7 +14,7 @@ import { initializeLaserTables } from "./js/Laser.js";
 import { initializeCommandTables } from "./js/Command.js";
 import { initializeChart } from "./js/Chart.js";
 import wsClient from "./js/Client.js";
-import PacketManager from "./js/BinaryTableHelper.js";
+import PacketManager from "./js/BinaryTableHelper";
 import statusBar from "./js/StatusBar.js";
 import { initializeUploadImage } from "./js/ImageUpload.js";
 import { initializeVideoStream, initializeBinarizedStream } from "./js/Video.js";

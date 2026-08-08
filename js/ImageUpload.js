@@ -2,7 +2,7 @@ import imgUploadClient, { setOnHandshakeAck, setOnPerFrameAck } from "./ImageUpl
 import wsClient from "./Client.js";
 import statusBar from "./StatusBar.js";
 //import {loadCommand_SJCJ} from "./Command.js";
-import PacketManager from "./BinaryTableHelper.js";
+import PacketManager from "./BinaryTableHelper";
 import { frameStats } from "./Video.js";
 import { loadCommand_SJCJ_F000H, setResolveAck_F000H_SJCJ } from "./Command.js";
 

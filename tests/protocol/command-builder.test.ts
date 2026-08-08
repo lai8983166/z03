@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildPacket, bufferToHex } from "../../js/CommandBuilder.js";
+import { buildPacket, bufferToHex } from "../../js/CommandBuilder";
 
 describe("buildPacket", () => {
   it("空 payload 时构造 16 字节包头", () => {

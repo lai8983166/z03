@@ -1,11 +1,15 @@
 /**
  * 解析 _loc.csv 定义内存布局，维护二进制缓冲区 (ArrayBuffer)，
  * 处理数据类型转换、精度缩放 (Scale) 和大小端 (Endian)。
+
+ * 注意：本模块含 DOM 相关方法（readCell/updateAllToTable 等），依赖浏览器
+ * document。这些方法不在 vitest（environment: node）单测范围；TS 类型化时
+ * 给 DOM 访问加 narrowing（原代码已隐式假设 table 是 HTMLTableElement）。
  */
 
 /**
  * 数据类型枚举。注意：parseLocData 在类型字符串无法识别时会把原始
- * 字符串赋给 MetaItem.type，因此 type 字段实际为 string（如实描述当前行为）。
+ * 字符串赋给 MetaItem.type，因此 type 字段实际为 DataTypeValue | string。
  */
 const DataType = {
   UINT8: "UINT8",
@@ -18,19 +22,21 @@ const DataType = {
   FLOAT64: "DOUBLE",
   RES: "RES", // 预留位
   NOTUSE: "NOTUSE",
-};
+} as const;
 
-/**
- * @typedef {Object} MetaItem
- * @property {number} index - CSV 中的序号
- * @property {number} row - 来源行号
- * @property {number} col - 来源列号
- * @property {string} name - 字段名
- * @property {string} type - DataType 的某个值，或未识别的原始类型字符串
- * @property {number} scale - 物理值缩放（0 表示不缩放）
- * @property {number} byteWidth - 该字段字节宽度
- * @property {number} offset - 在 buffer 中的字节偏移
- */
+type DataTypeValue = (typeof DataType)[keyof typeof DataType];
+
+interface MetaItem {
+  index: number;
+  row: number;
+  col: number;
+  name: string;
+  /** DataType 的某个值，或未识别的原始类型字符串（parseLocData 兜底逻辑） */
+  type: DataTypeValue | string;
+  scale: number;
+  byteWidth: number;
+  offset: number;
+}
 
 /**
  * 按 _loc.csv 定义维护一块二进制缓冲区，提供按 index/name 的读写、
@@ -38,31 +44,28 @@ const DataType = {
  * 依赖浏览器 document，不在本 change 单元测试范围。
  */
 class BinaryTableHelper {
-  constructor() {
-    /** @type {Map<number, MetaItem>} 按 index 存储字段定义 */
-    this.metaData = new Map();
+  /** 按 index 存储字段定义 */
+  metaData: Map<number, MetaItem> = new Map();
 
-    this.buffer = null;
-    this.view = null; // DataView 用于读写 buffer
+  buffer: ArrayBuffer | null = null;
+  view: DataView | null = null; // DataView 用于读写 buffer
 
-    // 小端模式
-    this.isLittleEndian = true;
+  // 小端模式
+  isLittleEndian: boolean = true;
 
-    this.totalBytes = 0;
-  }
+  totalBytes: number = 0;
 
   /**
    * 设置大小端模式
-   * @param {boolean} isLittle true=小端, false=大端
    */
-  setEndian(isLittle) {
+  setEndian(isLittle: boolean): void {
     this.isLittleEndian = isLittle;
   }
 
   /**
    * 获取数据类型的字节宽度
    */
-  getTypeWidth(type) {
+  getTypeWidth(type: DataTypeValue | string): number {
     switch (type) {
       case DataType.UINT8:
       case DataType.INT8:
@@ -83,9 +86,8 @@ class BinaryTableHelper {
 
   /**
    * 解析 _loc.csv 内容并初始化缓冲区
-   * @param {string} csvContent _loc.csv 的文件文本内容
    */
-  parseLocData(csvContent) {
+  parseLocData(csvContent: string): void {
     this.metaData.clear();
     this.totalBytes = 0;
 
@@ -120,7 +122,7 @@ class BinaryTableHelper {
             }
           }
 
-          let type = DataType.NOTUSE;
+          let type: DataTypeValue | string = DataType.NOTUSE;
           let scale = 0;
           let byteWidth = 0;
 
@@ -135,7 +137,7 @@ class BinaryTableHelper {
                 (key === "FLOAT32" && typeStr === "FLOAT") ||
                 (key === "FLOAT64" && typeStr === "DOUBLE")
               ) {
-                type = DataType[key];
+                type = DataType[key as keyof typeof DataType];
                 break;
               }
             }
@@ -167,10 +169,12 @@ class BinaryTableHelper {
     let currentOffset = 0;
     sortedKeys.forEach((key) => {
       const item = this.metaData.get(key);
-      item.offset = currentOffset;
-      currentOffset += item.byteWidth;
-      // 更新回 Map
-      this.metaData.set(key, item);
+      if (item) {
+        item.offset = currentOffset;
+        currentOffset += item.byteWidth;
+        // 更新回 Map
+        this.metaData.set(key, item);
+      }
     });
 
     this.totalBytes = currentOffset;
@@ -185,11 +189,8 @@ class BinaryTableHelper {
 
   /**
    * 按 CSV 中的字段名查找定义索引。
-   * @param {string} name 字段名（精确匹配）
-   * @param {number} occurrence 同名字段的第几个定义，默认第一个
-   * @returns {number|null}
    */
-  getIndexByName(name, occurrence = 0) {
+  getIndexByName(name: string, occurrence: number = 0): number | null {
     const matches = Array.from(this.metaData.entries())
       .filter(([, item]) => item.name === name)
       .sort(([indexA], [indexB]) => indexA - indexB);
@@ -198,19 +199,16 @@ class BinaryTableHelper {
 
   /**
    * 按字段名获取元数据。
-   * @param {string} name 字段名（精确匹配）
-   * @param {number} occurrence 同名字段的第几个定义，默认第一个
-   * @returns {Object|null}
    */
-  getMetaByName(name, occurrence = 0) {
+  getMetaByName(name: string, occurrence: number = 0): MetaItem | null {
     const index = this.getIndexByName(name, occurrence);
-    return index === null ? null : this.metaData.get(index);
+    return index === null ? null : this.metaData.get(index) ?? null;
   }
 
   /**
    * 按字段名写入值，避免业务逻辑依赖易变化的协议序号。
    */
-  setValueByName(name, uiValue, occurrence = 0) {
+  setValueByName(name: string, uiValue: string | number, occurrence: number = 0): boolean {
     const index = this.getIndexByName(name, occurrence);
     return index === null ? false : this.setValue(index, uiValue);
   }
@@ -218,27 +216,25 @@ class BinaryTableHelper {
   /**
    * 按字段名读取值，避免业务逻辑依赖易变化的协议序号。
    */
-  getValueByName(name, occurrence = 0) {
+  getValueByName(name: string, occurrence: number = 0): string {
     const index = this.getIndexByName(name, occurrence);
     return index === null ? "ERR" : this.getValue(index);
   }
 
   /**
    * 将界面上的值写入二进制缓冲区
-   * @param {number} index 数据索引
-   * @param {string|number} uiValue 界面上的值 (字符串或数字)
-   * @returns {boolean}
    */
-  setValue(index, uiValue) {
+  setValue(index: number, uiValue: string | number): boolean {
     if (!this.view || !this.metaData.has(index)) return false;
 
     const item = this.metaData.get(index);
+    if (!item) return false;
 
     // RES 类型通常不支持界面写入，或者是直接写 Hex 字符串，这里暂且跳过或按需实现
     if (item.type === DataType.RES || item.type === DataType.NOTUSE)
       return true;
 
-    let numVal = parseFloat(uiValue);
+    let numVal = parseFloat(String(uiValue));
     if (isNaN(numVal)) return false;
 
     // 界面值 10.0, scale 0.1 => 内存值 1
@@ -282,13 +278,12 @@ class BinaryTableHelper {
 
   /**
    * 从二进制缓冲区读取值用于界面显示
-   * @param {number} index 数据索引
-   * @returns {string} 格式化后的字符串
    */
-  getValue(index) {
+  getValue(index: number): string {
     if (!this.view || !this.metaData.has(index)) return "ERR";
 
     const item = this.metaData.get(index);
+    if (!item) return "ERR";
     if (item.type === DataType.RES) return ""; // 或者返回 Hex 字符串
 
     let rawVal = 0;
@@ -339,11 +334,8 @@ class BinaryTableHelper {
 
     /**
      * 格式化浮点数显示，限制小数位数
-     * @param {number} value - 要格式化的值
-     * @param {number} maxDecimals - 最大小数位数
-     * @returns {string} 格式化后的字符串
      */
-    formatFloat(value, maxDecimals = 4) {
+    formatFloat(value: number, maxDecimals: number = 4): string {
       // 如果是整数，直接返回
       if (Number.isInteger(value)) {
         return value.toString();
@@ -359,18 +351,16 @@ class BinaryTableHelper {
       return Number(value.toFixed(maxDecimals)).toString();
     }  /**
    * 获取整个二进制 Buffer 用于发送
-   * @returns {Uint8Array}
    */
-  getBufferForSend() {
+  getBufferForSend(): Uint8Array {
     if (!this.buffer) return new Uint8Array(0);
     return new Uint8Array(this.buffer);
   }
 
   /**
    * 接收数据并覆盖当前 Buffer
-   * @param {ArrayBuffer|Uint8Array} data
    */
-  loadBufferFromNet(data) {
+  loadBufferFromNet(data: ArrayBuffer | Uint8Array): void {
     if (!this.buffer) return;
 
     // 确保数据是 Uint8Array
@@ -383,13 +373,9 @@ class BinaryTableHelper {
 
   /**
    * 将 Helper 内部 buffer 的一段数据拷贝到外部 buffer
-   * * @param {Uint8Array} targetBuffer - 目标的发送 buffer
-   * @param {number} targetOffset - 目标 buffer 的写入起始位置 (例如 ptr[20])
-   * @param {number} dataIndex - _loc 定义中的数据索引 (例如 第5个数据)
-   * @param {number} count - 要拷贝多少个定义项 (例如 1个 或 27个)
    */
-  copyTo(targetBuffer, targetOffset, dataIndex, count) {
-    if (!this.view) return;
+  copyTo(targetBuffer: Uint8Array, targetOffset: number, dataIndex: number, count: number): void {
+    if (!this.view || !this.buffer) return;
 
     //找到起始偏移
     const startItem = this.metaData.get(dataIndex);
@@ -420,35 +406,29 @@ class BinaryTableHelper {
 
   /**
    * 从指定表格读取单元格的值
-   * @param {string} tableId - HTML 表格 ID
-   * @param {number} row - 行号
-   * @param {number} col - 列号
-   * @returns {string}
    */
-  readCell(tableId, row, col) {
-    const table = document.getElementById(tableId);
+  readCell(tableId: string, row: number, col: number): string {
+    const table = document.getElementById(tableId) as HTMLTableElement | null;
     if (!table || !table.rows[row]) return "";
 
     const cell = table.rows[row].cells[col];
     if (!cell) return "";
 
     // 处理 input/select 元素
-    const input = cell.querySelector("input, select");
+    const input = cell.querySelector("input, select") as HTMLInputElement | HTMLSelectElement | null;
     if (input) return input.value.trim();
 
-    return cell.textContent.trim();
+    return cell.textContent?.trim() ?? "";
   }
 
   /**
    * 从表格更新单个数据到内存
-   * @param {string} tableId - HTML 表格 ID
-   * @param {number} index - 数据索引
-   * @returns {boolean}
    */
-  updateBufFromTable(tableId, index) {
+  updateBufFromTable(tableId: string, index: number): boolean {
     if (!this.view || !this.metaData.has(index)) return false;
 
     const item = this.metaData.get(index);
+    if (!item) return false;
 
     if (item.type === DataType.RES || item.type === DataType.NOTUSE) {
       return true;
@@ -516,10 +496,8 @@ class BinaryTableHelper {
 
   /**
    * 从表格批量更新所有数据到内存
-   * @param {string} tableId - HTML 表格 ID
-   * @returns {boolean}
    */
-  updateAllFromTable(tableId) {
+  updateAllFromTable(tableId: string): boolean {
     if (!this.view) return false;
 
     let success = true;
@@ -534,10 +512,9 @@ class BinaryTableHelper {
 
   /**
    * 从内存更新所有数据到表格（用于接收数据后刷新 UI）
-   * @param {string} tableId - HTML 表格 ID
    */
-  updateAllToTable(tableId) {
-    const table = document.getElementById(tableId);
+  updateAllToTable(tableId: string): void {
+    const table = document.getElementById(tableId) as HTMLTableElement | null;
     if (!table || !this.view) return;
 
     this.metaData.forEach((item, index) => {
@@ -552,7 +529,7 @@ class BinaryTableHelper {
       const value = this.getValue(index);
 
       // 处理 input/select 元素
-      const input = cell.querySelector("input, select");
+      const input = cell.querySelector("input, select") as HTMLInputElement | HTMLSelectElement | null;
       if (input) {
         input.value = value;
       } else {
@@ -564,13 +541,13 @@ class BinaryTableHelper {
   /**
    * 按字段顺序返回所有非保留字段的当前值数组
    * 与 loadBufferFromNet 配合使用，可从实际发送的字节直接提取各字段值
-   * @returns {Array} 字段值数组（顺序与 metaData 的 index 排序一致）
    */
-  getAllValues() {
+  getAllValues(): string[] {
     const sortedKeys = Array.from(this.metaData.keys()).sort((a, b) => a - b);
-    const result = [];
+    const result: string[] = [];
     for (const key of sortedKeys) {
       const item = this.metaData.get(key);
+      if (!item) continue;
       if (item.type === DataType.RES || item.type === DataType.NOTUSE) continue;
       result.push(this.getValue(key));
     }
@@ -580,21 +557,20 @@ class BinaryTableHelper {
   /**
    * 按字段顺序返回所有非保留字段的名称数组（从 HTML 表格名称列读取）
    * 名称列 = 值列 - 1（CSV 格式：name, value, name, value, ...）
-   * @param {string} tableId - HTML 表格 ID
-   * @returns {string[]} 字段名称数组
    */
-  getAllNames(tableId) {
-    const table = document.getElementById(tableId);
+  getAllNames(tableId: string): string[] {
+    const table = document.getElementById(tableId) as HTMLTableElement | null;
     const sortedKeys = Array.from(this.metaData.keys()).sort((a, b) => a - b);
-    const result = [];
+    const result: string[] = [];
     for (const key of sortedKeys) {
       const item = this.metaData.get(key);
+      if (!item) continue;
       if (item.type === DataType.RES || item.type === DataType.NOTUSE) continue;
       let name = `字段${key}`;
       if (table) {
         const row = table.rows[item.row];
         if (row && row.cells[item.col - 1]) {
-          const text = row.cells[item.col - 1].textContent.trim();
+          const text = row.cells[item.col - 1].textContent?.trim() ?? "";
           if (text) name = text;
         }
       }
@@ -605,13 +581,10 @@ class BinaryTableHelper {
 
   /**
    * 获取指定索引的详细信息（用于调试和显示）
-   * @param {string} tableId - HTML 表格 ID
-   * @param {number} index - 数据索引
-   * @returns {Object|null} 包含 uiValue, memoryValue, scale, type 等信息
    */
-  getSpecInfo(tableId, index) {
-    const table = document.getElementById(tableId);
-    if (!table || !this.view) return null;
+  getSpecInfo(tableId: string, index: number): { uiValue: string; memoryValue: number | string; scale: number; type: DataTypeValue | string } | null {
+    const table = document.getElementById(tableId) as HTMLTableElement | null;
+    if (!table || !this.view || !this.buffer) return null;
 
     const item = this.metaData.get(index);
     if (!item) return null;
@@ -620,7 +593,7 @@ class BinaryTableHelper {
     const col = item.col;
     const uiValue = this.readCell(tableId, row, col);
 
-    let memoryValue = 0;
+    let memoryValue: number | string = 0;
     try {
       switch (item.type) {
         case DataType.UINT8:
@@ -647,7 +620,7 @@ class BinaryTableHelper {
         case DataType.FLOAT64:
           memoryValue = this.view.getFloat64(item.offset, this.isLittleEndian);
           break;
-        case DataType.RES:
+        case DataType.RES: {
           // 保留字段，读取原始字节
           const resBytes = new Uint8Array(
             this.buffer,
@@ -658,6 +631,7 @@ class BinaryTableHelper {
             .map((b) => b.toString(16).padStart(2, "0"))
             .join(" ");
           break;
+        }
         default:
           memoryValue = "N/A";
       }
@@ -680,58 +654,54 @@ class BinaryTableHelper {
  * 注意：init 依赖 fetch，不在本 change 单元测试范围。
  */
 class PacketManager {
-  constructor() {
-    /** @type {Object.<string, BinaryTableHelper>} */
-    this.packets = {};
+  packets: Record<string, BinaryTableHelper> = {};
 
-    //Web端无法自动扫描文件夹，必须手动列出，或者请求一个包含列表的json
-    this.protocols = [
-      "SJCJ_Recv",
-      "SJCJ_Send",
-      "SJCJ_F000H_Recv",
-      "SJCJ_F000H_Send",
-      "JGCSZD_Send",
-      "IRDetectParam_Recv",
-      "Wake_Send",
-      "App_Ver_Recv",
-      "CSZD",
-      "CSZD_Recv",
-      "CSZD_ZTZ",
-      "CSZD_ZTZ_Recv",
-      "GDCSZD_Recv",
-      "GDCSZD_Send",
-      "HWYDZT_Recv",
-      "IRDetectParam_Send",
-      "JFSJ_Recv",
-      "JFSJ_Send",
-      "JGCSZD",
-      "JGCSZD_Send",
-      "JGCSZD_Recv",
-      "JGCSZDXC_Recv",
-      "JGGZZT_Recv",
-      "OnceCommand_Send",
-      "Product_Pic",
-      "RJBB_Recv",
-      "SFCS",
-      "SFCSZD",
-      "Shut_Send",
-        "ZJJG_Recv",
-        "CSZD_Send_3000H",
-        "CSZD_Send_3000H_JJHCS",
-        "CSZD_Recv_3000H",
-        "YCTX_Recv",
-        "SJL_SJCJ_Send",
-        "SJL_SJCJ_Recv_0x00",
-        "SJL_SJCJ_Recv_0xFF",
-        "LVDS_YC_Recv",
-    ];
-  }
+  //Web端无法自动扫描文件夹，必须手动列出，或者请求一个包含列表的json
+  protocols: string[] = [
+    "SJCJ_Recv",
+    "SJCJ_Send",
+    "SJCJ_F000H_Recv",
+    "SJCJ_F000H_Send",
+    "JGCSZD_Send",
+    "IRDetectParam_Recv",
+    "Wake_Send",
+    "App_Ver_Recv",
+    "CSZD",
+    "CSZD_Recv",
+    "CSZD_ZTZ",
+    "CSZD_ZTZ_Recv",
+    "GDCSZD_Recv",
+    "GDCSZD_Send",
+    "HWYDZT_Recv",
+    "IRDetectParam_Send",
+    "JFSJ_Recv",
+    "JFSJ_Send",
+    "JGCSZD",
+    "JGCSZD_Send",
+    "JGCSZD_Recv",
+    "JGCSZDXC_Recv",
+    "JGGZZT_Recv",
+    "OnceCommand_Send",
+    "Product_Pic",
+    "RJBB_Recv",
+    "SFCS",
+    "SFCSZD",
+    "Shut_Send",
+    "ZJJG_Recv",
+    "CSZD_Send_3000H",
+    "CSZD_Send_3000H_JJHCS",
+    "CSZD_Recv_3000H",
+    "YCTX_Recv",
+    "SJL_SJCJ_Send",
+    "SJL_SJCJ_Recv_0x00",
+    "SJL_SJCJ_Recv_0xFF",
+    "LVDS_YC_Recv",
+  ];
 
   /**
    * 初始化：并发请求所有 CSV 文件并解析
-   * @param {string} csvBaseUrl - csv 文件存放的相对路径
    */
-  async init(csvBaseUrl = "./csv/") {
+  async init(csvBaseUrl: string = "./csv/"): Promise<void> {
     console.log(
       `[PacketManager] Starting to load protocols from ${csvBaseUrl}...`,
     );
@@ -770,10 +740,8 @@ class PacketManager {
 
   /**
    * 获取指定协议的 Helper
-   * @param {string} protocolName
-   * @returns {BinaryTableHelper}
    */
-  get(protocolName) {
+  get(protocolName: string): BinaryTableHelper | null {
     if (!this.packets[protocolName]) {
       console.warn(
         `[PacketManager] Protocol not found or not loaded: ${protocolName}`,

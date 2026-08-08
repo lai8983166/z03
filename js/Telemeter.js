@@ -1,5 +1,5 @@
 import { Utils, setLEDStatus } from "../main.js";
-import PacketManager from "./BinaryTableHelper.js";
+import PacketManager from "./BinaryTableHelper";
 import {
   handleVideoFrame,
   convert16to8bit,

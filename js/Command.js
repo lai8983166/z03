@@ -36,7 +36,7 @@
  *  Tab 8 "红外图像检测参数装订"
  */
 import { Utils, setLEDStatus } from "../main.js";
-import PacketManager from "./BinaryTableHelper.js";
+import PacketManager from "./BinaryTableHelper";
 import wsClient from "./Client.js";
 import statusBar from "./StatusBar.js";
 import { triggerSJCJResolve } from "./ImageUpload.js";

@@ -17,8 +17,8 @@
     "vite.config.ts",
     "vitest.config.ts",
     "tests/**/*.ts",
-    "js/CommandBuilder.js",
-    "js/BinaryTableHelper.js"
+    "js/CommandBuilder.ts",
+    "js/BinaryTableHelper.ts"
   ],
   "exclude": ["node_modules"]
 }

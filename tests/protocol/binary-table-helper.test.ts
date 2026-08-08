@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 // BinaryTableHelper class 未导出（只导出 PacketManager 单例），通过 mock fetch
 // 让 PacketManager.init 拿到构造的 CSV，再 get() 取出 helper 测试——这样不改源文件。
-import PacketManager from "../../js/BinaryTableHelper.js";
+import PacketManager from "../../js/BinaryTableHelper";
 
 // 一行综合 CSV：u8/u16(带 scale)/u32/res/f32 各一个定义，字段名在定义左侧。
 // offset: u8(1)@0, u16(2)@1, u32(4)@3, res(2)@7, f32(4)@9  → totalBytes = 13
