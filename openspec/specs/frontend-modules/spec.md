@@ -1,6 +1,6 @@
 # Spec: frontend-modules
 
-> 前端业务模块（`js/` 下）的 TS 化与类型契约。本 capability 在 frontend-ts-batch-a change 中建立（批 A 8 小文件），frontend-ts-batch-b 完成批 B（5 中等文件）。后续 change C 继续迁移大文件，change D 单独决策 main.js + index.html。
+> 前端业务模块（`js/` 下）的 TS 化与类型契约。本 capability 在 frontend-ts-batch-a change 中建立（批 A 8 小文件），frontend-ts-batch-b 完成批 B（5 中等文件），frontend-ts-batch-c 完成批 C（2 大文件 Video/Command）。仅剩 main.js + index.html 留批 D 单独决策。
 
 ## Requirements
 
@@ -8,12 +8,12 @@
 项目 `js/` 下的前端业务模块 MUST 以 `.ts` 形式存在，提供完整 TypeScript 类型（class 字段、函数签名、DOM 操作 narrowing、事件 payload inline 类型）。迁移按规模分批进行：
 - ✅ **批 A（frontend-ts-batch-a，已完成）**：8 个小文件——`Client.ts` / `ImageUploadClient.ts` / `StatusBar.ts` / `Chart.ts` / `Infrared.ts` / `Laser.ts` / `DataHandler.ts` / `Telemeter.ts`
 - ✅ **批 B（frontend-ts-batch-b，已完成）**：5 个中等文件——`YC.ts` / `ImageUpload.ts` / `DataRouter.ts` / `CodeUpload.ts` / `TurntableControl.ts`
-- ⏳ **批 C（后续 change）**：2 个大文件——`Video.ts` / `Command.ts`
+- ✅ **批 C（frontend-ts-batch-c，已完成）**：2 个大文件——`Video.ts` / `Command.ts`
 - ⏳ **批 D（独立决策）**：`main.js` + index.html（涉及 index.html 改动约束，单独评估）
 
-#### Scenario: 批 A/B 13 个文件全部通过 typecheck
+#### Scenario: 批 A/B/C 15 个文件全部通过 typecheck
 - **WHEN** 运行 `npm run typecheck`
-- **THEN** tsconfig.json（前端）检查 13 个 .ts 文件并通过，0 错（允许极少数成本过高处用 `// @ts-expect-error` 注明原因）
+- **THEN** tsconfig.json（前端）检查 15 个 .ts 文件并通过，0 错（允许极少数成本过高处用 `// @ts-expect-error` 注明原因）
 
 #### Scenario: 批 A 8 个文件无 @ts-nocheck
 - **WHEN** grep 8 个文件的 `@ts-nocheck`
