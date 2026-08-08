@@ -1,20 +1,14 @@
-// @ts-nocheck: 后端 .ts 由 .js 迁移而来，含大量动态 class 属性等 JS 模式，
-// tsc 强制检查会报数以百计的类型错。本 change 聚焦"打通 tsx 运行能力"，
-// 类型收紧留给后续 change（3b 配合模块拆分补声明时逐个移除本指令）。
-import { spawn } from "child_process";
 import http from "http";
 import WebSocket from "ws";
 import path from "path";
 import fs from "fs";
-import ExcelJS from "exceljs";
-import UdpBridge from "./js/Udp";
-import TcpBridge from "./TcpBridge";
-import { SerialPort } from "serialport";
 import { loadConfig } from "./config";
 import { createWsBus } from "./ws-bus";
 import { createVideo } from "./video";
 import { createData } from "./data";
 import { createControl } from "./control";
+import { createTurntable } from "./turntable";
+import { createBridges } from "./bridges";
 
 // ==================== 配置 ====================
 // 所有运行时参数集中在 config.json，由 config.js 的 loadConfig 读取并校验。
@@ -25,22 +19,7 @@ const HTTP_PORT = cfg.http.port;
 const WS_PORT = cfg.ws.port;
 const WS_PORT_IMG = cfg.ws.portImg; // 图像上传专用 WebSocket 端口
 
-const USE_TCP = cfg.bridges[0].useTcp;
-
-// UDP 配置
-//const UDP_LOCAL_IP = "0.0.0.0"; // 监听所有网卡
-//const UDP_LOCAL_PORT = 6000; // 本地端口
-const UDP_LOCAL_IP = cfg.bridges[0].localIp;
-const UDP_LOCAL_PORT = cfg.bridges[0].localPort; // 本地端口
-
-const UDP_REMOTE_IP = cfg.bridges[0].remoteIp; // 目标设备 IP
-//const UDP_REMOTE_IP = "127.0.0.1";
-//const UDP_REMOTE_PORT = 5000; // 目标设备端口
-const UDP_REMOTE_PORT = cfg.bridges[0].remotePort; // 目标设备端口
-// UDP_REMOTE_PORT = 61440; // 目标设备端口
-//const IMAGE_UPLOAD_REMOTE_PORT = 30041;
-const IMAGE_UPLOAD_REMOTE_PORT = cfg.imageUpload.remotePort;
-const IMAGE_UPLOAD_REMOTE_IP = cfg.imageUpload.remoteIp;
+// Bridge / 图像上传配置已迁 bridges 模块（cfg.bridges / cfg.imageUpload）
 
 // ==================== HTTP 服务器====================
 const server = http.createServer((req, res) => {
@@ -96,13 +75,13 @@ wssImg.on("connection", (ws) => {
     if (Buffer.isBuffer(message)) {
       // 尝试 JSON 解析（控制消息）
       try {
-        const data = JSON.parse(message);
+        const data = JSON.parse(message.toString());
         console.log("[IMG-WS] 收到 JSON 控制消息:", data.type);
         // 如有需要可在此处理图像上传专属控制消息
       } catch (e) {
         // 非 JSON → 二进制 UDP 数据包，直接转发
         console.log(`[IMG-WS] 转发二进制到图像上传UDP (${message.length} 字节)`);
-        udpBridge3.sendPacket(message);
+        bridges.sendImageUpload(message);
       }
     }
   });
@@ -160,7 +139,7 @@ wss.on("connection", (ws) => {
         console.log("mes:::", mes);
       
         
-        udpBridge.sendPacket(messageBuffer);
+        bridges.sendToBridge1(messageBuffer);
       
 
     } else if (typeof mes.type === "string") {
@@ -197,7 +176,7 @@ wss.on("connection", (ws) => {
             }`,
         );
 
-        udpBridge.sendPacket(message);
+        bridges.sendToBridge1(message);
     }*/
     // 优先检测视频帧保存魔术字节 (0xF0 前缀，非JSON)
     if (Buffer.isBuffer(message) && message.length > 1 && message[0] === 0xf0) {
@@ -237,7 +216,7 @@ wss.on("connection", (ws) => {
         }`,
       );*/
 
-      udpBridge.sendPacket(message);
+      bridges.sendToBridge1(message);
     }
   });
 
@@ -253,258 +232,28 @@ wss.on("connection", (ws) => {
 
 // ==================== Bridge 配置 + 事件监听 + 初始化 ====================
 
-// --- Bridge 1 ---
-const udpBridge = USE_TCP ? new TcpBridge() : new UdpBridge();
-
-udpBridge.on("ready", () => {
-  console.log("✅ UDP ready");
-  console.log("   准备广播 udp_ready 消息...");
-  udpReady = true;
-  wsBus.broadcast({
-    type: "udp_ready",
-    message: "UDP connection established",
-  });
-  console.log("   已广播 udp_ready 消息，当前连接客户端数:", clients.size);
+// --- 3 路 Bridge 装配（由 bridges 模块管理）---
+const bridges = createBridges({
+  wsBus,
+  bridges: cfg.bridges,
+  onBridge1Ready: () => { udpReady = true; },
 });
 
-udpBridge.on("rs485", (info) => {
-  //console.log(`[Server] RS485 事件: flag=${info.flag}, name=${info.name}`);
-  wsBus.broadcast({
-    type: "rs485",
-    flag: info.flag,
-    name: info.name,
-    data: info.data ? info.data.toString("hex") : null,
-    meta: info.meta || null,
-  });
+// ==================== 转台串口（由 turntable 模块管理）====================
+const turntable = createTurntable({
+  wsBus,
+  serialPort: cfg.turntable.serialPort,
+  baudRate: cfg.turntable.baudRate,
 });
-
-udpBridge.on("heixiazi", (info) => {
-  // 0x03 前缀 + 原始字节，走二进制通道
-  const packet = Buffer.allocUnsafe(1 + info.data.length);
-  packet[0] = 0x03;
-  info.data.copy(packet, 1);
-  wsBus.broadcastBinary(packet);
-});
-
-udpBridge.on("YC", (info) => {
-  // 0x04 前缀 + 原始字节，走二进制通道
-  const packet = Buffer.allocUnsafe(1 + info.data.length);
-  packet[0] = 0x04;
-  info.data.copy(packet, 1);
-  wsBus.broadcastBinary(packet);
-});
-
-udpBridge.on("laser_data", (data) => {
-  wsBus.broadcast({
-    type: "laser_data",
-    data: data.toString("hex"),
-  });
-});
-
-udpBridge.on("chart_update", (data) => {
-  wsBus.broadcast({
-    type: "chart_update",
-    data: data.toString("hex"),
-  });
-});
-
-udpBridge.on("SJCJ_trigger", () => {
-  wsBus.broadcast({ type: "SJCJ_trigger" });
-});
-
-udpBridge.on("received", (info) => {
-  console.log("📩 UDP 收到数据，准备广播...");
-  wsBus.broadcast({
-    type: "udp_received",
-    data: info.data.toString("hex"),
-    from: info.from,
-  });
-});
-
-udpBridge.on("sent", (buffer) => {
-  console.log("📤 UDP 发送成功，准备广播...");
-  wsBus.broadcast({
-    type: "udp_sent",
-    length: buffer.length,
-  });
-});
-
-udpBridge.on("error", (err) => {
-  console.error("❌ UDP 错误:", err.message);
-  wsBus.broadcast({
-    type: "udp_error",
-    error: err.message,
-  });
-});
-
-console.log("🔧 正在初始化 UDP...");
-udpBridge.init(UDP_LOCAL_IP, UDP_LOCAL_PORT, UDP_REMOTE_IP, UDP_REMOTE_PORT,'udp');
-
-// --- Bridge 2 ---
-// 按需修改以下参数，USE_TCP2=true 用 TcpBridge，false 用 UdpBridge
-const USE_TCP2 = cfg.bridges[1].useTcp;
-const UDP2_LOCAL_IP   = cfg.bridges[1].localIp;
-const UDP2_LOCAL_PORT = cfg.bridges[1].localPort;               // 本地监听端口（UDP 模式需要与 Bridge 1 不同）
-const UDP2_REMOTE_IP  = cfg.bridges[1].remoteIp;      // 第二个设备的 IP
-const UDP2_REMOTE_PORT = cfg.bridges[1].remotePort;              // 第二个设备的端口
-
-const udpBridge2 = USE_TCP2 ? new TcpBridge() : new UdpBridge();
-
-udpBridge2.on("ready", () => {
-  console.log("✅ Bridge2 ready");
-  wsBus.broadcast({ type: "udp2_ready", message: "Bridge2 connected" });
-});
-
-udpBridge2.on("rs485", (info) => {
-  wsBus.broadcast({ type: "rs485_2", flag: info.flag, name: info.name,
-    data: info.data ? info.data.toString("hex") : null,
-    meta: info.meta || null });
-});
-
-udpBridge2.on("heixiazi", (info) => {
-  const packet = Buffer.allocUnsafe(1 + info.data.length);
-  packet[0] = 0x03;
-  info.data.copy(packet, 1);
-  wsBus.broadcastBinary(packet);
-});
-
-udpBridge2.on("YC", (info) => {
-  const packet = Buffer.allocUnsafe(1 + info.data.length);
-  packet[0] = 0x04;
-  info.data.copy(packet, 1);
-  wsBus.broadcastBinary(packet);
-});
-
-udpBridge2.on("laser_data", (data) => {
-  wsBus.broadcast({ type: "laser_data_2", data: data.toString("hex") });
-});
-
-udpBridge2.on("error", (err) => {
-  console.error("❌ Bridge2 错误:", err.message);
-});
-
-// 转台上行 ASCII 帧透传给前端
-udpBridge2.on("raw_text", (text) => {
-  wsBus.broadcast({ type: "turntable_reply", text });
-});
-
-udpBridge2.init(UDP2_LOCAL_IP, UDP2_LOCAL_PORT, UDP2_REMOTE_IP, UDP2_REMOTE_PORT,'udp');
-
-// --- Bridge 3 ---
-// 按需修改以下参数，USE_TCP3=true 用 TcpBridge，false 用 UdpBridge
-const USE_TCP3 = cfg.bridges[2].useTcp;
-const UDP3_LOCAL_IP   = cfg.bridges[2].localIp;
-const UDP3_LOCAL_PORT = cfg.bridges[2].localPort;               // 本地监听端口
-const UDP3_REMOTE_IP  = cfg.bridges[2].remoteIp;      // 第三个设备的 IP
-const UDP3_REMOTE_PORT = cfg.bridges[2].remotePort;              // 第三个设备的端口
-
-const udpBridge3 = USE_TCP3 ? new TcpBridge() : new UdpBridge();
-
-udpBridge3.on("ready", () => {
-  console.log("✅ Bridge3 ready");
-  wsBus.broadcastImg({ type: "udp3_ready", message: "Bridge3 connected" });
-});
-
-udpBridge3.on("heixiazi", (info) => {
-  const packet = Buffer.allocUnsafe(1 + info.data.length);
-  packet[0] = 0x03;
-  info.data.copy(packet, 1);
-  wsBus.broadcastBinary(packet);
-});
-
-udpBridge3.on("error", (err) => {
-  console.error("❌ Bridge3 错误:", err.message);
-  wsBus.broadcastImg({ type: "udp3_error", error: err.message });
-});
-
-udpBridge3.init(UDP3_LOCAL_IP, UDP3_LOCAL_PORT, UDP3_REMOTE_IP, UDP3_REMOTE_PORT,'udp');
-
-// ==================== 转台串口通信 ====================
-// 串口号可在运行时通过前端界面动态修改（发送 SET_TURNTABLE_PORT 消息）
-let TURNTABLE_SERIAL_PORT = cfg.turntable.serialPort;     // ← 可通过前端界面实时修改
-const TURNTABLE_BAUD_RATE = cfg.turntable.baudRate;     // ← 根据实际波特率修改
-
-let turntableSerial = null;
-let turntableSerialBuf = "";            // 用于拼接不完整的 ASCII 行
-
-/**
- * 初始化转台串口，打开后监听数据并广播给前端。
- * 每次收到 \n 结尾的完整行就作为一帧处理。
- */
-function initTurntableSerial() {
-  turntableSerial = new SerialPort({
-    path: TURNTABLE_SERIAL_PORT,
-    baudRate: TURNTABLE_BAUD_RATE,
-    autoOpen: false,
-  });
-
-  turntableSerial.open((err) => {
-    if (err) {
-      console.error(`❌ 转台串口 ${TURNTABLE_SERIAL_PORT} 打开失败:`, err.message);
-      wsBus.broadcast({ type: "turntable_serial_error", message: err.message });
-      return;
-    }
-    console.log(`✅ 转台串口 ${TURNTABLE_SERIAL_PORT} 已打开，波特率 ${TURNTABLE_BAUD_RATE}`);
-    wsBus.broadcast({ type: "turntable_serial_ready", port: TURNTABLE_SERIAL_PORT });
-  });
-
-  turntableSerial.on("data", (chunk) => {
-    // chunk 是 Buffer，追加到缓冲区按行切割
-    console.log("[Turntable Serial] 原始字节:", chunk.toString("hex"), `(${chunk.length}字节)`);
-    turntableSerialBuf += chunk.toString("utf8");
-    const lines = turntableSerialBuf.split("\n");
-    // 最后一段可能不完整，留在缓冲区
-    turntableSerialBuf = lines.pop();
-    for (const line of lines) {
-      const text = line.replace(/\r$/, "").trim();
-      if (!text) continue;
-      console.log("[Turntable Serial] 收到:", text);
-      if (text.startsWith("$")) {
-        wsBus.broadcast({ type: "turntable_reply", text });
-      }
-    }
-  });
-
-  turntableSerial.on("error", (err) => {
-    console.error("❌ 转台串口错误:", err.message);
-    wsBus.broadcast({ type: "turntable_serial_error", message: err.message });
-  });
-
-  turntableSerial.on("close", () => {
-    console.warn("⚠️ 转台串口已关闭");
-    wsBus.broadcast({ type: "turntable_serial_closed" });
-  });
-}
-
-/**
- * 向转台串口写入数据（字节数组或 Buffer）。
- * 若串口未打开则打印警告并忽略。
- *
- * @param {Buffer|Uint8Array} buf
- */
-function sendToTurntableSerial(buf) {
-  if (!turntableSerial || !turntableSerial.isOpen) {
-    console.warn("⚠️ 转台串口未打开，无法发送");
-    return;
-  }
-  const text = buf.toString("utf8").replace(/\r\n$/, "\\r\\n");
-  console.log("[Turntable Serial] 发送:", text);
-  turntableSerial.write(buf, (err) => {
-    if (err) console.error("❌ 转台串口写入失败:", err.message);
-  });
-}
-
-// 启动串口（如需禁用可注释此行）
-initTurntableSerial();
+turntable.init();
 
 // broadcast 由 ws-bus 提供（见 wsBus.broadcast）
 
 // ====================关闭 ====================
 process.on("SIGINT", () => {
   console.log("\n🛑 Shutting down...");
-  udpBridge.close();
-  udpBridge2.close();
-  udpBridge3.close();
+  bridges.close();
+  turntable.close();
   wsBus.close();
   server.close();
   process.exit(0);
@@ -547,17 +296,8 @@ const control = createControl({
   data,
   video,
   turntable: {
-    send: (buf) => sendToTurntableSerial(buf),
-    setPort: (port) => {
-      if (turntableSerial && turntableSerial.isOpen) {
-        turntableSerial.close((err) => {
-          if (err) console.warn("关闭旧串口时出错:", err.message);
-        });
-        turntableSerial = null;
-      }
-      TURNTABLE_SERIAL_PORT = port;
-      initTurntableSerial();
-    },
+    send: (buf) => turntable.send(buf),
+    setPort: (port) => turntable.setPort(port),
   },
   binarized: {
     getInvert: () => binarizedInvert,
@@ -579,9 +319,8 @@ console.log("\n🎥 准备启动 RTSP 视频流监听...");
 process.on("SIGINT", () => {
   console.log("\n🛑 Shutting down...");
   video.stopVideoStream();
-  udpBridge.close();
-  udpBridge2.close();
-  udpBridge3.close();
+  bridges.close();
+  turntable.close();
   wsBus.close();
   server.close();
   process.exit(0);
