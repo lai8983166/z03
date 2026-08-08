@@ -1,6 +1,6 @@
 # Spec: protocol-regression-tests
 
-> 协议层回归测试套件 + JSDoc 类型注解，锁住已联调通过的协议解析行为，为后续 .ts 迁移提供安全网。本 capability 在 protocol-layer-ts change 中建立，文件保持 `.js`，行为绝对不变。
+> 协议层回归测试套件 + 类型注解（桥层完整 TS 类型 + 工具层 JSDoc），锁住已联调通过的协议解析行为，作为后续 .ts 迁移与类型收尾的安全网。本 capability 在 protocol-layer-ts change 中建立（JSDoc），并在 bridge-impl-types change 中升级桥层为完整 TS 类型。
 
 ## Requirements
 
@@ -35,11 +35,25 @@
 - **THEN** 不调用 `document.getElementById` 等 DOM API；DOM 相关方法（`readCell`/`updateAllToTable` 等）不在测试范围
 
 ### Requirement: 协议层 JSDoc 类型注解
-`TcpBridge.js`、`js/Udp.js`、`js/CommandBuilder.js`、`js/BinaryTableHelper.js`（迁 .ts 后文件名对应变化）MUST 添加 JSDoc 类型注解（`@param`/`@returns`/`@typedef`/`@type`），使 `tsc --noEmit`（基线的 `allowJs` 配置）能识别字段、参数、返回值类型。
+4 个协议层源文件（`TcpBridge.ts`、`js/Udp.ts`、`js/CommandBuilder.js`、`js/BinaryTableHelper.js`）MUST 添加类型注解（JSDoc 或 TS 类型），使 `tsc --noEmit`（tsconfig.node 与 tsconfig.json）能识别字段、参数、返回值类型。其中：
+- `TcpBridge.ts` 与 `js/Udp.ts` MUST 提供完整 TS 类型（class 字段、方法签名、命令表 `interface`/`Record<string, CmdDef>`、Buffer 处理），MUST 移除顶部 `// @ts-nocheck`
+- `js/CommandBuilder.js` 与 `js/BinaryTableHelper.js` 维持现有 JSDoc 注解（留后续 change 升级）
 
-#### Scenario: tsc 识别 JSDoc 类型
+#### Scenario: TcpBridge.ts 与 js/Udp.ts 通过 typecheck 且无 @ts-nocheck
 - **WHEN** 运行 `npm run typecheck`
-- **THEN** 命令以退出码 0 通过（JSDoc 注解不引入类型错误）
+- **THEN** tsconfig.node.json 检查 `TcpBridge.ts` 与 `js/Udp.ts`（不再被 `@ts-nocheck` 跳过）并通过，无类型错误（允许极少数成本过高处用 `// @ts-expect-error` 注明原因）
+
+#### Scenario: grep 复核两个桥文件无 @ts-nocheck
+- **WHEN** grep `TcpBridge.ts` 与 `js/Udp.ts` 的 `@ts-nocheck`
+- **THEN** 无匹配（已移除）
+
+#### Scenario: CommandBuilder.js 与 BinaryTableHelper.js 维持 JSDoc
+- **WHEN** 运行 `npm run typecheck`
+- **THEN** tsconfig.json 仍以 JSDoc 模式识别这两个 .js 文件，命令以退出码 0 通过（与 protocol-layer-ts 后状态一致）
+
+#### Scenario: 协议解析测试全绿（行为未变）
+- **WHEN** 运行 `npm test`
+- **THEN** tests/protocol/tcp-bridge.test.ts 与 tests/protocol/udp-bridge.test.ts 的全部测试通过（断言形状未变，证明类型化未误改协议逻辑）
 
 ### Requirement: 源文件行为逐字不变
 4 个协议层源文件的可执行语句 MUST 逐字不动——只允许增加注释与 JSDoc 注解（`@param`/`@returns`/`@typedef`/`@type` 等），MUST NOT 改变任何变量赋值、表达式、控制流、字节布局、命令表数值。

@@ -16,7 +16,7 @@
 - **THEN** 关闭旧串口（若 isOpen）+ 设新 port + 重新 init（封装原 SET_TURNTABLE_PORT 逻辑）
 
 ### Requirement: bridges 模块
-项目 MUST 提供 `bridges.ts`，导出 `createBridges(opts)` 工厂（opts: wsBus + bridgesConfig[3] + TcpBridge/UdpBridge 构造器），返回 `{ close() }`。逐字搬迁 3 路 udpBridge 装配（事件监听 + init）。TcpBridge/UdpBridge 实例自身 @ts-nocheck 类型不完整 → 用 `as` 断言或 `// @ts-expect-error` 处理 `.on`/`.init`（桥实现层类型债留后续 change）。
+项目 MUST 提供 `bridges.ts`，导出 `createBridges(opts)` 工厂（opts: wsBus + bridgesConfig[3] + TcpBridge/UdpBridge 构造器），返回 `{ close() }`。逐字搬迁 3 路 udpBridge 装配（事件监听 + init）。TcpBridge/UdpBridge 实例的类型在 bridge-impl-types change 中补齐——`bridges.ts` 内对 `.on`/`.init` 的调用 MUST 直接通过 `npm run typecheck`；若仍存在 `// @ts-expect-error` 或 `as` 断言，MUST 在注释中注明具体原因（如"EventEmitter 自定义事件 ready/udp_data 的 TS 内置重载不识别"）。
 
 #### Scenario: Bridge 1 ready 广播 udp_ready
 - **WHEN** Bridge 1 触发 ready 事件
@@ -25,6 +25,10 @@
 #### Scenario: Bridge 3 ready 广播 udp3_ready（imgClients）
 - **WHEN** Bridge 3 触发 ready
 - **THEN** wsBus.broadcastImg udp3_ready（走图像 WS 通道，与重构前一致）
+
+#### Scenario: bridges.ts 通过 typecheck（无 @ts-nocheck）
+- **WHEN** 运行 `npm run typecheck`
+- **THEN** tsconfig.node.json 检查 bridges.ts 通过；保留的 `// @ts-expect-error` 行均标注具体原因（无空注释的 expect-error）
 
 ### Requirement: turntable / bridges 完整 TS 类型（模块层无 @ts-nocheck）
 `turntable.ts` 与 `bridges.ts` MUST 提供完整 TypeScript 类型（工厂函数签名 + opts/返回 interface），MUST NOT 在模块层使用 `// @ts-nocheck`。`npm run typecheck` 的 node tsconfig MUST 检查两者并通过。
