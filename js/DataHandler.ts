@@ -166,7 +166,7 @@ export function handleRS485(flag: number, name: string, data: Uint8Array, meta: 
           break;
 
       case 30:
-          // @ts-expect-error handle_SelfTest_0002H 来自 Command.js，未 TS 化（change C 处理），实际接受 1 参数
+          // @ts-expect-error handle_SelfTest_0002H 在 Command.ts 中是无参函数，调用方传 data（运行时被忽略），保留原调用
           handle_SelfTest_0002H(data);
           break;
       case 31:

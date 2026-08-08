@@ -11,6 +11,15 @@ import wsClient from "./Client";
 import statusBar from "./StatusBar";
 import { handle_YC_DATA } from "./Telemeter";
 
+// Window 全局扩展（main.js 注入的属性 / 黑匣子状态标志）
+declare global {
+  interface Window {
+    isBlackboxDrawing?: boolean;
+    isBlackboxReplaying?: boolean;
+    wsClient?: typeof wsClient;
+  }
+}
+
 // ==================== 视频保存状态 ====================
 export let isSavingVideo = false;
 
@@ -19,7 +28,7 @@ export let isSavingVideo = false;
  * 向服务端发送 REQUEST_SAVE_PATH 请求，由服务端弹出原生文件保存对话框选择路径，
  * 服务端选定路径后直接开始保存并回传 SAVE_STATUS 通知前端。
  */
-export function startSavingVideo() {
+export function startSavingVideo(): void {
   statusBar.sendMessage("请在服务端窗口选择保存位置...", "black");
   const cmd = JSON.stringify({
     type: "REQUEST_SAVE_PATH",
@@ -31,7 +40,13 @@ export function startSavingVideo() {
   console.log("[Video] 请求服务端弹出文件保存对话框");
 
   // 监听服务端回传的保存状态（一次性）
-  const onStatus = (msg) => {
+  interface SaveStatusMsg {
+    saveType?: string;
+    status?: string;
+    path?: string;
+    msg?: string;
+  }
+  const onStatus = (msg: SaveStatusMsg): void => {
     if (msg.saveType !== "video") return;
     wsClient.off("SAVE_STATUS", onStatus);
     if (msg.status === "started") {
@@ -49,7 +64,7 @@ export function startSavingVideo() {
 /**
  * 停止保存视频帧
  */
-export function stopSavingVideo() {
+export function stopSavingVideo(): void {
   isSavingVideo = false;
   const cmd = JSON.stringify({
     type: "CONTROL_CMD",
@@ -67,7 +82,7 @@ const SCALE = 3; // 放大倍数
 const REPLAY_16BIT = true;
 
 let frameCount = 0;
-let processedData = null;
+let processedData: Uint8Array | null = null;
 
 // 图像帧统计（用于调试发送、接收、渲染数量是否一致）
 export const frameStats = {
@@ -156,22 +171,22 @@ const VideoState = {
   // 帧计数
   frameCount: 0,
   // 用于平滑拉伸
-  stretchLow: null,
-  stretchHigh: null,
+  stretchLow: null as number | null,
+  stretchHigh: null as number | null,
   stretchAlpha: 0.1,
 
   // 回放状态
   isReplaying: false,   // 是否在回放模式（已加载数据）
   isReplayPaused: true, // 是否暂停（true=暂停，false=播放中）
-  replayData: null, // 回放文件的帧数据数组
+  replayData: null as Uint8Array[] | null, // 回放文件的帧数据数组
   replayDataType: "video", // 回放文件的数据类型: "video" 或者是 "blackbox"
   replayCurrentFrame: 0, // 当前回放帧索引
   replayTotalFrames: 0, // 回放总帧数
-  replayTimer: null, // 回放定时器
+  replayTimer: null as ReturnType<typeof setInterval> | null, // 回放定时器
   replayFps: 25, // 回放帧率
 
   //目标框（绿框）状态
-  targetBox: { x: null, y: null, visible: false },
+  targetBox: { x: null as number | null, y: null as number | null, visible: false },
 
   // 红框拖拽状态
   isDragging: false,
@@ -182,47 +197,49 @@ const VideoState = {
 };
 
 // Canvas 引用
-let canvas384 = null; // 384x384 红外图像
-let ctx384 = null;
-let canvas11x11 = null; // 11x11 放大区域
-let ctx11x11 = null;
+let canvas384: HTMLCanvasElement | null = null; // 384x384 红外图像
+let ctx384: CanvasRenderingContext2D | null = null;
+let canvas11x11: HTMLCanvasElement | null = null; // 11x11 放大区域
+let ctx11x11: CanvasRenderingContext2D | null = null;
 let responseLastUpdateAt = 0;
 
 // 原始帧数据缓存
-let currentFrame = null;
+let currentFrame: Uint8Array | null = null;
 
 /**
  * 初始化视频显示
  */
-export function initializeVideoStream() {
+export function initializeVideoStream(): void {
   // 获取 384x384 Canvas
   const container = document.getElementById("infrared-widget");
   if (container) {
-    canvas384 = document.createElement("canvas");
-    canvas384.width = 384;
-    canvas384.height = 384;
-    canvas384.style.cursor = "crosshair";
-    container.appendChild(canvas384);
-    ctx384 = canvas384.getContext("2d");
+    const c = document.createElement("canvas");
+    c.width = 384;
+    c.height = 384;
+    c.style.cursor = "crosshair";
+    container.appendChild(c);
+    canvas384 = c;
+    ctx384 = c.getContext("2d");
 
-    canvas384.addEventListener("mousedown", onCanvasMouseDown);
-    canvas384.addEventListener("mousemove", onCanvasMouseMove);
-    canvas384.addEventListener("mouseup", onCanvasMouseUp);
-    canvas384.addEventListener("mouseleave", onCanvasMouseLeave);
+    c.addEventListener("mousedown", onCanvasMouseDown);
+    c.addEventListener("mousemove", onCanvasMouseMove);
+    c.addEventListener("mouseup", onCanvasMouseUp);
+    c.addEventListener("mouseleave", onCanvasMouseLeave);
   }
 
   // 获取 11x11 区域 Canvas
   const container11 = document.getElementById("widget_2");
   if (container11) {
-    canvas11x11 = document.createElement("canvas");
-    canvas11x11.width = 220;
-    canvas11x11.height = 220;
-    container11.appendChild(canvas11x11);
-    ctx11x11 = canvas11x11.getContext("2d");
+    const c = document.createElement("canvas");
+    c.width = 220;
+    c.height = 220;
+    container11.appendChild(c);
+    canvas11x11 = c;
+    ctx11x11 = c.getContext("2d");
 
     // 双击 11x11 画布重新定位中心
-    canvas11x11.addEventListener("dblclick", (e) => {
-      const rect = canvas11x11.getBoundingClientRect();
+    c.addEventListener("dblclick", (e) => {
+      const rect = c.getBoundingClientRect();
       const cx = e.clientX - rect.left;
       const cy = e.clientY - rect.top;
       const j = Math.floor(cx / 20);
@@ -235,18 +252,22 @@ export function initializeVideoStream() {
   const table6 = document.getElementById("tableWidget_6");
   if (table6) {
     table6.addEventListener("dblclick", (e) => {
-      const td = e.target.closest("td");
+      const target = e.target as HTMLElement;
+      const td = target.closest("td");
       if (!td) return;
       const tr = td.parentElement;
+      if (!tr) return;
       const j = Array.from(tr.children).indexOf(td);
-      const i = Array.from(tr.parentElement.children).indexOf(tr);
+      const trParent = tr.parentElement;
+      if (!trParent) return;
+      const i = Array.from(trParent.children).indexOf(tr);
       if (j >= 0 && i >= 0) {
         shiftSelectedCenter(j, i);
       }
     });
   }
 
-  function shiftSelectedCenter(j, i) {
+  function shiftSelectedCenter(j: number, i: number): void {
     const dx128 = j - 5;
     const dy128 = i - 5;
     const SCALE = 3;
@@ -268,7 +289,7 @@ export function initializeVideoStream() {
   const modeSelect = document.getElementById("comboBox_ImgShowMode");
   if (modeSelect) {
     modeSelect.addEventListener("change", (e) => {
-      const index = e.target.selectedIndex;
+      const index = (e.target as HTMLSelectElement).selectedIndex;
       switch (index) {
         case 0:
           VideoState.displayMode = DisplayMode.BIT_0_7;
@@ -314,19 +335,19 @@ export function initializeVideoStream() {
   }
 
   // 绑定分段线性参数输入（change + input 双监听，保证实时响应）
-  const minInput = document.getElementById("textEdit");
-  const maxInput = document.getElementById("textEdit_2");
+  const minInput = document.getElementById("textEdit") as HTMLInputElement | null;
+  const maxInput = document.getElementById("textEdit_2") as HTMLInputElement | null;
   if (minInput) {
-    const onMinChange = (e) => {
-      const v = parseInt(e.target.value);
+    const onMinChange = (e: Event): void => {
+      const v = parseInt((e.target as HTMLInputElement).value);
       if (!isNaN(v)) VideoState.linearMin = Math.max(0, Math.min(16383, v));
     };
     minInput.addEventListener("change", onMinChange);
     minInput.addEventListener("input",  onMinChange);
   }
   if (maxInput) {
-    const onMaxChange = (e) => {
-      const v = parseInt(e.target.value);
+    const onMaxChange = (e: Event): void => {
+      const v = parseInt((e.target as HTMLInputElement).value);
       if (!isNaN(v)) VideoState.linearMax = Math.max(0, Math.min(16383, v));
     };
     maxInput.addEventListener("change", onMaxChange);
@@ -337,15 +358,15 @@ export function initializeVideoStream() {
   updateAnalysisRectInputs();
 
   // 绑定分析区域坐标输入框：输入后实时更新红框
-  const rectX  = document.getElementById("textEdit_x");
-  const rectY  = document.getElementById("textEdit_y");
-  const rectX1 = document.getElementById("textEdit_x1");
-  const rectY1 = document.getElementById("textEdit_y1");
-  const onRectInputChange = () => {
-    const x1 = Math.max(0, Math.min(383, parseInt(rectX  ? rectX.value  : 0) || 0));
-    const y1 = Math.max(0, Math.min(383, parseInt(rectY  ? rectY.value  : 0) || 0));
-    const x2 = Math.max(0, Math.min(383, parseInt(rectX1 ? rectX1.value : 383) || 383));
-    const y2 = Math.max(0, Math.min(383, parseInt(rectY1 ? rectY1.value : 383) || 383));
+  const rectX  = document.getElementById("textEdit_x")  as HTMLInputElement | null;
+  const rectY  = document.getElementById("textEdit_y")  as HTMLInputElement | null;
+  const rectX1 = document.getElementById("textEdit_x1") as HTMLInputElement | null;
+  const rectY1 = document.getElementById("textEdit_y1") as HTMLInputElement | null;
+  const onRectInputChange = (): void => {
+    const x1 = Math.max(0, Math.min(383, parseInt(rectX  ? rectX.value  : "0") || 0));
+    const y1 = Math.max(0, Math.min(383, parseInt(rectY  ? rectY.value  : "0") || 0));
+    const x2 = Math.max(0, Math.min(383, parseInt(rectX1 ? rectX1.value : "383") || 383));
+    const y2 = Math.max(0, Math.min(383, parseInt(rectY1 ? rectY1.value : "383") || 383));
     VideoState.analysisRect = { x1, y1, x2, y2 };
     drawAnalysisRect();
   };
@@ -359,7 +380,7 @@ export function initializeVideoStream() {
   console.log("[OK] 视频显示模块初始化完成");
 }
 
-export const set_CurrentFrame = (data) => {
+export const set_CurrentFrame = (data: Uint8Array): void => {
   currentFrame = data;
 };
 
@@ -369,7 +390,7 @@ export const set_CurrentFrame = (data) => {
  * @param {number} width - 图像宽度
  * @param {number} height - 图像高度
  */
-export function handleVideoFrame(frameData, width = 128, height = 128) {
+export function handleVideoFrame(frameData: Uint8Array, width = 128, height = 128): void {
   if (!ctx384) return;
 
   // 如果在回放模式，并且不是黑匣子正在绘制其图像时，忽略实时视频流
@@ -384,7 +405,7 @@ export function handleVideoFrame(frameData, width = 128, height = 128) {
   currentFrame = frameData.slice();
   VideoState.frameCount++;
 
-  let processedData;
+  let processedData: Uint8Array;
 
   switch (VideoState.displayMode) {
     case DisplayMode.BIT_0_7:
@@ -459,7 +480,7 @@ export function handleVideoFrame(frameData, width = 128, height = 128) {
 /**
  * YUV 受限范围 (16-235) 转全范围 (0-255)
  */
-function yuvToFullRange(data) {
+function yuvToFullRange(data: Uint8Array): Uint8Array {
   const result = new Uint8Array(data.length);
 
   for (let i = 0; i < data.length; i++) {
@@ -474,7 +495,7 @@ function yuvToFullRange(data) {
   return result;
 }
 
-function cvNormalizeMinMax(data) {
+function cvNormalizeMinMax(data: Uint8Array): Uint8Array {
   let min = 255;
   let max = 0;
   // 找极值
@@ -502,7 +523,7 @@ function cvNormalizeMinMax(data) {
 /**
  * 自动拉伸（根据当前帧的 min/max 自动映射到 0-255）
  */
-function autoStretch(data) {
+function autoStretch(data: Uint8Array): Uint8Array {
   let min = 255,
     max = 0;
 
@@ -522,7 +543,7 @@ function autoStretch(data) {
   return result;
 }
 
-function autoStretchPercentile(data, lowP = 0.02, highP = 0.98, gamma = 0.8) {
+function autoStretchPercentile(data: Uint8Array, lowP = 0.02, highP = 0.98, gamma = 0.8): Uint8Array {
   const hist = new Uint32Array(256);
   for (let i = 0; i < data.length; i++) hist[data[i]]++;
 
@@ -591,24 +612,27 @@ function autoStretchPercentile(data, lowP = 0.02, highP = 0.98, gamma = 0.8) {
 }*/
 
 // 预分配 drawScaledImage 所用的临时 Canvas 和 ImageData，避免每帧重复创建
-let _scaledTempCanvas = null;
-let _scaledTempCtx = null;
-let _scaledImgData = null;
-let _scaledImgPixels = null; // Uint32Array 视图，一次写入 RGBA 4字节
+let _scaledTempCanvas: HTMLCanvasElement | null = null;
+let _scaledTempCtx: CanvasRenderingContext2D | null = null;
+let _scaledImgData: ImageData | null = null;
+let _scaledImgPixels: Uint32Array | null = null; // Uint32Array 视图，一次写入 RGBA 4字节
 let _scaledW = 0;
 let _scaledH = 0;
 
 /**
  * 专门用于将小图放大绘制到大 Canvas
  */
-export function drawScaledImage(ctx, data, w, h) {
+export function drawScaledImage(ctx: CanvasRenderingContext2D, data: Uint8Array, w: number, h: number): void {
   // 若尺寸变化则重新分配（正常情况下 128x128 只分配一次）
   if (w !== _scaledW || h !== _scaledH || !_scaledTempCanvas) {
-    _scaledTempCanvas = document.createElement("canvas");
-    _scaledTempCanvas.width = w;
-    _scaledTempCanvas.height = h;
-    _scaledTempCtx = _scaledTempCanvas.getContext("2d");
-    _scaledImgData = _scaledTempCtx.createImageData(w, h);
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx2 = canvas.getContext("2d");
+    if (!ctx2) return;
+    _scaledTempCanvas = canvas;
+    _scaledTempCtx = ctx2;
+    _scaledImgData = ctx2.createImageData(w, h);
     // Uint32Array 视图：小端序下每个元素对应 RGBA 四字节
     // 布局: 低字节=R, 次低=G, 次高=B, 高字节=A → uint32 = 0xAABBGGRR
     _scaledImgPixels = new Uint32Array(_scaledImgData.data.buffer);
@@ -617,27 +641,33 @@ export function drawScaledImage(ctx, data, w, h) {
   }
 
   // 一次32位写入代替4次 Uint8ClampedArray 赋值，跳过 clamp 边界检查
-  const pixels = _scaledImgPixels;
+  const pixels = _scaledImgPixels!;
   for (let i = 0; i < data.length; i++) {
     const val = data[i];
     pixels[i] = (255 << 24) | (val << 16) | (val << 8) | val; // A=255, B=G=R=val
   }
 
-  _scaledTempCtx.putImageData(_scaledImgData, 0, 0);
+  _scaledTempCtx!.putImageData(_scaledImgData!, 0, 0);
 
   // 关闭平滑，实现像素化放大
   ctx.imageSmoothingEnabled = false;
-  ctx.mozImageSmoothingEnabled = false;
-  ctx.webkitImageSmoothingEnabled = false;
+  // moz/webkit 前缀属性不在标准 CanvasRenderingContext2D 类型中
+  interface PrefixedCtx {
+    mozImageSmoothingEnabled: boolean;
+    webkitImageSmoothingEnabled: boolean;
+  }
+  const prefixed = ctx as unknown as PrefixedCtx;
+  prefixed.mozImageSmoothingEnabled = false;
+  prefixed.webkitImageSmoothingEnabled = false;
 
   // 拉伸绘制到 384x384
-  ctx.drawImage(_scaledTempCanvas, 0, 0, w, h, 0, 0, DST_SIZE, DST_SIZE);
+  ctx.drawImage(_scaledTempCanvas!, 0, 0, w, h, 0, 0, DST_SIZE, DST_SIZE);
 }
 
 /**
  * 绘制灰度图像到 Canvas
  */
-function drawGrayImage(ctx, data, width, height) {
+function drawGrayImage(ctx: CanvasRenderingContext2D, data: Uint8Array, width: number, height: number): void {
   const imageData = ctx.createImageData(width, height);
 
   for (let i = 0; i < data.length; i++) {
@@ -655,7 +685,7 @@ function drawGrayImage(ctx, data, width, height) {
 /**
  * 直方图均衡化
  */
-function histogramEqualization_16(data) {
+function histogramEqualization_16(data: Uint8Array): Uint8Array {
   const histogram = new Array(256).fill(0);
   const result = new Uint8Array(data.length);
 
@@ -683,7 +713,7 @@ function histogramEqualization_16(data) {
   return result;
 }
 
-export function histogramEqualization(data){
+export function histogramEqualization(data: Uint8Array): Uint8Array {
     const pixelCount=data.length/2;
     const dv=new DataView(data.buffer,data.byteOffset,data.byteLength);
     const histogram=new Uint32Array(65536);
@@ -722,7 +752,7 @@ export function histogramEqualization(data){
  * @param {Uint8Array} data - 输入数据（16位）
  * @param {number} shiftBits - 提取位数
  */
-function extractBits(data, shiftBits) {
+function extractBits(data: Uint8Array, shiftBits: number): Uint8Array {
   /*const result = new Uint8Array(data.length);
   for (let i = 0; i < data.length; i++) {
     result[i] = (data[i] >> shiftBits) & 0xff;
@@ -740,7 +770,7 @@ function extractBits(data, shiftBits) {
  * 16位线性映射到0-255
  * @param {Uint8Array} data - 输入数据（8位）
  */
-function map16BitTo255(data) {
+function map16BitTo255(data: Uint8Array): Uint8Array {
   const result = new Uint8Array(data.length);
   for (let i = 0; i < data.length; i++) {
     // 线性映射: (value * 255) / 16383
@@ -766,7 +796,7 @@ function map16BitTo255(data) {
  * @param {number} hi  上限（0~16383）
  * @returns {Uint8Array}  输出 8 位灰度数组
  */
-function linearStretch(data, lo, hi) {
+function linearStretch(data: Uint8Array, lo: number, hi: number): Uint8Array {
   const pixelCount = data.length / 2;
   const result = new Uint8Array(pixelCount);
   const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
@@ -837,8 +867,8 @@ function drawTargetBox() {
 /**
  * Canvas 鼠标按下 - 开始拖拽
  */
-function onCanvasMouseDown(e) {
-  const rect = canvas384.getBoundingClientRect();
+function onCanvasMouseDown(e: MouseEvent): void {
+  const rect = canvas384!.getBoundingClientRect();
   const x = Math.floor(e.clientX - rect.left);
   const y = Math.floor(e.clientY - rect.top);
 
@@ -852,8 +882,8 @@ function onCanvasMouseDown(e) {
 /**
  * Canvas 鼠标移动 - 拖拽中或更新蓝框位置
  */
-function onCanvasMouseMove(e) {
-  const rect = canvas384.getBoundingClientRect();
+function onCanvasMouseMove(e: MouseEvent): void {
+  const rect = canvas384!.getBoundingClientRect();
   const x = Math.floor(e.clientX - rect.left);
   const y = Math.floor(e.clientY - rect.top);
 
@@ -898,7 +928,7 @@ function onCanvasMouseMove(e) {
           VideoState._rafPending = true;
           requestAnimationFrame(() => {
             VideoState._rafPending = false;
-            drawScaledImage(ctx384, processedSnapshot, SRC_SIZE, SRC_SIZE);
+            drawScaledImage(ctx384!, processedSnapshot, SRC_SIZE, SRC_SIZE);
             drawAnalysisRect();
             drawSelectedRect();
             drawTargetBox();
@@ -922,13 +952,13 @@ function onCanvasMouseMove(e) {
 /**
  * Canvas 鼠标释放 - 结束拖拽并更新红框位置
  */
-function onCanvasMouseUp(e) {
+function onCanvasMouseUp(e: MouseEvent): void {
   // 重置鼠标按下状态
   VideoState.isMouseDown = false;
 
   // 如果不是拖拽状态：视为点击，更新蓝框位置
   if (!VideoState.isDragging) {
-    const rect = canvas384.getBoundingClientRect();
+    const rect = canvas384!.getBoundingClientRect();
     const x = Math.floor(e.clientX - rect.left);
     const y = Math.floor(e.clientY - rect.top);
     VideoState.selectedCenter.x = Math.max(5, Math.min(378, x));
@@ -965,7 +995,7 @@ function onCanvasMouseUp(e) {
 /**
  * Canvas 鼠标离开 - 仅终止拖拽状态，不更新蓝框位置
  */
-function onCanvasMouseLeave() {
+function onCanvasMouseLeave(): void {
   VideoState.isMouseDown = false;
   VideoState.isDragging  = false;
 }
@@ -997,23 +1027,23 @@ function drawDragPreview() {
 /**
  * 更新分析区域坐标输入框
  */
-function updateAnalysisRectInputs() {
+function updateAnalysisRectInputs(): void {
   const { x1, y1, x2, y2 } = VideoState.analysisRect;
 
   // 左上角坐标（384坐标系）
-  const textEditX = document.getElementById("textEdit_x");
-  const textEditY = document.getElementById("textEdit_y");
-  if (textEditX) textEditX.value = x1;
-  if (textEditY) textEditY.value = y1;
+  const textEditX = document.getElementById("textEdit_x") as HTMLInputElement | null;
+  const textEditY = document.getElementById("textEdit_y") as HTMLInputElement | null;
+  if (textEditX) textEditX.value = String(x1);
+  if (textEditY) textEditY.value = String(y1);
 
   // 右下角坐标（384坐标系）
-  const textEditX1 = document.getElementById("textEdit_x1");
-  const textEditY1 = document.getElementById("textEdit_y1");
-  if (textEditX1) textEditX1.value = x2;
-  if (textEditY1) textEditY1.value = y2;
+  const textEditX1 = document.getElementById("textEdit_x1") as HTMLInputElement | null;
+  const textEditY1 = document.getElementById("textEdit_y1") as HTMLInputElement | null;
+  if (textEditX1) textEditX1.value = String(x2);
+  if (textEditY1) textEditY1.value = String(y2);
 }
 
-function computePercentileRange(data, lowP = 0.02, highP = 0.98) {
+function computePercentileRange(data: Uint8Array, lowP = 0.02, highP = 0.98): { low: number; high: number } {
   const hist = new Uint32Array(256);
   for (let i = 0; i < data.length; i++) hist[data[i]]++;
 
@@ -1044,7 +1074,7 @@ function computePercentileRange(data, lowP = 0.02, highP = 0.98) {
   return { low, high };
 }
 
-function applyRangeStretch(data, low, high, gamma = 0.8) {
+function applyRangeStretch(data: Uint8Array, low: number, high: number, gamma = 0.8): Uint8Array {
   const range = Math.max(1, high - low);
   const out = new Uint8Array(data.length);
 
@@ -1062,7 +1092,7 @@ function applyRangeStretch(data, low, high, gamma = 0.8) {
  * 更新 11x11 区域显示
  * 坐标需要从 384 坐标系换算到 128 坐标系
  */
-function update11x11Region(SRC_SIZE=128, processedFrame=null) {
+function update11x11Region(SRC_SIZE = 128, processedFrame: Uint8Array | null = null): void {
   if (!currentFrame || !ctx11x11) return;
   /*const HexString = Array.from(currentFrame)
     .map((byte) => byte.toString(16).padStart(2, "0").toUpperCase())
@@ -1150,7 +1180,8 @@ function update11x11Region(SRC_SIZE=128, processedFrame=null) {
     W_d -= 9 * Y;
     W /= W_d;
     //console.log("W:::", W);
-    document.getElementById("textBrowser").innerText = W;
+    const textBrowser = document.getElementById("textBrowser");
+    if (textBrowser) textBrowser.innerText = String(W);
     frameCount = 0;
   }
 
@@ -1158,7 +1189,7 @@ function update11x11Region(SRC_SIZE=128, processedFrame=null) {
   const cellSize = 20;
 
   // 若没有传入已处理帧，按当前 displayMode 重新转换
-  let frame8 = processedFrame;
+  let frame8: Uint8Array | null = processedFrame;
   if (!frame8) {
     switch (VideoState.displayMode) {
       case DisplayMode.BIT_0_7:  frame8 = extractBits(currentFrame, 0); break;
@@ -1214,7 +1245,7 @@ function update11x11Region(SRC_SIZE=128, processedFrame=null) {
       const py = dataY + (i - 5);
       let val = 0;
       if (px >= 0 && px < SRC_SIZE && py >= 0 && py < SRC_SIZE) {
-        val = frame8[py * SRC_SIZE + px];
+        val = frame8![py * SRC_SIZE + px];
       }
       ctx11x11.fillStyle = `rgb(${val}, ${val}, ${val})`;
       ctx11x11.fillRect(j * cellSize, i * cellSize, cellSize, cellSize);
@@ -1228,13 +1259,13 @@ function update11x11Region(SRC_SIZE=128, processedFrame=null) {
   if (labelCol) labelCol.textContent = `列:${dataX + 1}`;
 
   // 更新像素值表格
-  const table = document.getElementById("tableWidget_6");
+  const table = document.getElementById("tableWidget_6") as HTMLTableElement | null;
   if (table) {
     for (let i = 0; i < 11; i++) {
       for (let j = 0; j < 11; j++) {
         const val = pixelValues[i * 11 + j];
         if (table.rows[i] && table.rows[i].cells[j]) {
-          table.rows[i].cells[j].textContent = val;
+          table.rows[i].cells[j].textContent = String(val);
         }
       }
     }
@@ -1245,7 +1276,7 @@ function update11x11Region(SRC_SIZE=128, processedFrame=null) {
  * 计算并更新统计信息
  * 注意：坐标需要换算
  */
-function updateStatistics() {
+function updateStatistics(): void {
   if (!currentFrame) return;
 
   // 将 384 坐标系的红框换算到 128 坐标系
@@ -1293,9 +1324,9 @@ function updateStatistics() {
 /**
  * 开始视频流
  */
-export function startVideoStream(wsClient) {
-  if (wsClient && wsClient.ws) {
-    wsClient.ws.send(JSON.stringify({ type: "start_video" }));
+export function startVideoStream(client: typeof wsClient): void {
+  if (client && client.ws) {
+    client.ws.send(JSON.stringify({ type: "start_video" }));
     VideoState.isPlaying = true;
     console.log("[VIDEO] 请求开始视频流");
   }
@@ -1304,9 +1335,9 @@ export function startVideoStream(wsClient) {
 /**
  * 停止视频流
  */
-export function stopVideoStream(wsClient) {
-  if (wsClient && wsClient.ws) {
-    wsClient.ws.send(JSON.stringify({ type: "stop_video" }));
+export function stopVideoStream(client: typeof wsClient): void {
+  if (client && client.ws) {
+    client.ws.send(JSON.stringify({ type: "stop_video" }));
     VideoState.isPlaying = false;
     console.log("[STOP] 请求停止视频流");
   }
@@ -1314,12 +1345,15 @@ export function stopVideoStream(wsClient) {
 
 // ==================== 回放功能 ====================
 
-export function convert16to8bit(frame16, src_size = 128) {
+export function convert16to8bit(frame16: Uint8Array, src_size = 128): Uint8Array {
   const pixelCount = src_size * src_size;
   const frame8 = new Uint8Array(pixelCount);
+  // NOTE (business bug, NOT fixed per task constraints): 下行 frame16.byteoffset
+  // 应为 frame16.byteOffset（大写 O）。当前小写写法运行时取到 undefined，
+  // DataView 会将 undefined 作为默认值（缓冲区全长），故功能未受影响。
   const dv = new DataView(
     frame16.buffer,
-    frame16.byteoffset,
+    (frame16 as unknown as Record<string, number | undefined>)["byteoffset"],
     frame16.byteLength,
   );
 
@@ -1350,27 +1384,28 @@ export function convert16to8bit(frame16, src_size = 128) {
  * @param {string} type - 回放文件类型 ("video" 或 "blackbox")
  * @returns {Promise<Array<Uint8Array>>} - 返回帧数据数组
  */
-export async function loadReplayFile(file, type = "video") {
+export async function loadReplayFile(file: File, type = "video"): Promise<Uint8Array[]> {
   VideoState.replayDataType = type;
-  return new Promise((resolve, reject) => {
+  return new Promise<Uint8Array[]>((resolve, reject) => {
     const reader = new FileReader();
 
     reader.onload = function (e) {
       try {
-        const arrayBuffer = e.target.result;
+        const target = e.target as FileReader;
+        const arrayBuffer = target.result as ArrayBuffer;
         const uint8Array = new Uint8Array(arrayBuffer);
 
-        const FRAME_SIZE = type === "blackbox" 
-          ? 40960 
+        const FRAME_SIZE = type === "blackbox"
+          ? 40960
           : (REPLAY_16BIT ? SRC_SIZE * SRC_SIZE * 2 : SRC_SIZE * SRC_SIZE);
-          
+
         const totalFrames = Math.floor(uint8Array.length / FRAME_SIZE);
 
         console.log(
           `[FILE] 文件大小: ${uint8Array.length} 字节, 每帧: ${FRAME_SIZE} 字节, 帧数: ${totalFrames}`,
         );
 
-        const frames = [];
+        const frames: Uint8Array[] = [];
         for (let i = 0; i < totalFrames; i++) {
           const start = i * FRAME_SIZE;
           const end = start + FRAME_SIZE;
@@ -1396,7 +1431,7 @@ export async function loadReplayFile(file, type = "video") {
  * 开始回放
  * @param {Array<Uint8Array>} frames - 帧数据数组
  */
-export function startReplay(frames) {
+export function startReplay(frames: Uint8Array[]): void {
   if (!frames || frames.length === 0) {
     console.error("[ERROR] 回放数据为空");
     return;
@@ -1428,7 +1463,7 @@ export function startReplay(frames) {
 /**
  * 恢复（继续）回放
  */
-export function resumeReplay() {
+export function resumeReplay(): void {
   if (!VideoState.isReplaying || !VideoState.replayData) return;
   if (!VideoState.isReplayPaused) return;
 
@@ -1445,7 +1480,7 @@ export function resumeReplay() {
 /**
  * 暂停回放
  */
-export function pauseReplay() {
+export function pauseReplay(): void {
   if (!VideoState.isReplaying || VideoState.isReplayPaused) return;
 
   if (VideoState.replayTimer) {
@@ -1461,7 +1496,7 @@ export function pauseReplay() {
 /**
  * 停止回放
  */
-export function stopReplay() {
+export function stopReplay(): void {
   if (VideoState.replayTimer) {
     clearInterval(VideoState.replayTimer);
     VideoState.replayTimer = null;
@@ -1483,11 +1518,11 @@ export function stopReplay() {
 /**
  * 渲染指定帧（不推进索引）
  */
-function renderFrameAt(index) {
+function renderFrameAt(index: number): void {
   if (!VideoState.replayData) return;
   index = Math.max(0, Math.min(index, VideoState.replayTotalFrames - 1));
 
-  let frameData = VideoState.replayData[index];
+  const frameData = VideoState.replayData[index];
 
   if (VideoState.replayDataType === "blackbox") {
     // 渲染黑匣子帧
@@ -1497,7 +1532,7 @@ function renderFrameAt(index) {
     return; // handle_YC_DATA 内部会调用 handleVideoFrame 并在其中进行显示及 UI 更新
   }
 
-  let processedData;
+  let processedData: Uint8Array;
 
   switch (VideoState.displayMode) {
     case DisplayMode.BIT_0_7:   processedData = frameData; break;
@@ -1518,7 +1553,7 @@ function renderFrameAt(index) {
       processedData = histogramEqualization(frameData); break;
   }
 
-  drawScaledImage(ctx384, processedData, SRC_SIZE, SRC_SIZE);
+  drawScaledImage(ctx384!, processedData, SRC_SIZE, SRC_SIZE);
   currentFrame = frameData;
   drawAnalysisRect();
   drawSelectedRect();
@@ -1530,7 +1565,7 @@ function renderFrameAt(index) {
 /**
  * 渲染当前回放帧（自动播放用，渲染后推进索引）
  */
-function renderReplayFrame() {
+function renderReplayFrame(): void {
   if (!VideoState.isReplaying || !VideoState.replayData) {
     return;
   }
@@ -1552,7 +1587,7 @@ function renderReplayFrame() {
  * 回放：跳转到指定帧
  * @param {number} frameIndex - 帧索引
  */
-export function seekReplayFrame(frameIndex) {
+export function seekReplayFrame(frameIndex: number): void {
   if (!VideoState.isReplaying || !VideoState.replayData) {
     return;
   }
@@ -1570,7 +1605,7 @@ export function seekReplayFrame(frameIndex) {
 /**
  * 回放：上一帧
  */
-export function replayPreviousFrame() {
+export function replayPreviousFrame(): void {
   if (!VideoState.isReplaying || !VideoState.replayData) return;
   if (!VideoState.isReplayPaused) return; // 仅暂停时可用
 
@@ -1582,7 +1617,7 @@ export function replayPreviousFrame() {
 /**
  * 回放：下一帧
  */
-export function replayNextFrame() {
+export function replayNextFrame(): void {
   if (!VideoState.isReplaying || !VideoState.replayData) return;
   if (!VideoState.isReplayPaused) return; // 仅暂停时可用
 
@@ -1597,34 +1632,40 @@ export function replayNextFrame() {
 /**
  * 更新回放 UI（帧数显示、滑块等）
  */
-function updateReplayUI() {
-  const currentFrameInput = document.getElementById("textEdit_CurrentFrame");
-  const totalFrameInput = document.getElementById("textEdit_TotalFrame");
-  const slider = document.getElementById("horizontalSlider");
+function updateReplayUI(): void {
+  const currentFrameInput = document.getElementById("textEdit_CurrentFrame") as HTMLInputElement | null;
+  const totalFrameInput = document.getElementById("textEdit_TotalFrame") as HTMLInputElement | null;
+  const slider = document.getElementById("horizontalSlider") as HTMLInputElement | null;
 
   if (VideoState.isReplaying) {
     // 回放模式：显示回放帧数
     if (currentFrameInput)
-      currentFrameInput.value = VideoState.replayCurrentFrame;
-    if (totalFrameInput) totalFrameInput.value = VideoState.replayTotalFrames;
+      currentFrameInput.value = String(VideoState.replayCurrentFrame);
+    if (totalFrameInput) totalFrameInput.value = String(VideoState.replayTotalFrames);
 
     if (slider && VideoState.replayTotalFrames > 0) {
-      slider.value =
-        (VideoState.replayCurrentFrame / VideoState.replayTotalFrames) * 100;
+      slider.value = String(
+        (VideoState.replayCurrentFrame / VideoState.replayTotalFrames) * 100,
+      );
     }
   } else {
     // 非回放模式：清空或显示实时流计数
     // 可以选择保持最后的帧数显示或清零
-    if (currentFrameInput) currentFrameInput.value = 0;
-    if (totalFrameInput) totalFrameInput.value = 0;
-    if (slider) slider.value = 0;
+    if (currentFrameInput) currentFrameInput.value = String(0);
+    if (totalFrameInput) totalFrameInput.value = String(0);
+    if (slider) slider.value = String(0);
   }
 }
 
 /**
  * 获取回放状态（供外部查询）
  */
-export function getReplayState() {
+export function getReplayState(): {
+  isReplaying: boolean;
+  isReplayPaused: boolean;
+  currentFrame: number;
+  totalFrames: number;
+} {
   return {
     isReplaying: VideoState.isReplaying,
     isReplayPaused: VideoState.isReplayPaused,
@@ -1638,7 +1679,7 @@ export function getReplayState() {
  * @param {number} x - 目标框中心X坐标
  * @param {number} y - 目标框中心Y坐标
  */
-export function setTargetBoxPosition(x, y) {
+export function setTargetBoxPosition(x: number, y: number): void {
   VideoState.targetBox.x = Math.max(0, Math.min(DST_SIZE, x));
   VideoState.targetBox.y = Math.max(0, Math.min(DST_SIZE, y));
   VideoState.targetBox.visible = true;
@@ -1655,8 +1696,8 @@ const BinarizedVideoState = {
 };
 
 // 二值化 Canvas 引用
-let canvasBinarized = null;
-let ctxBinarized = null;
+let canvasBinarized: HTMLCanvasElement | null = null;
+let ctxBinarized: CanvasRenderingContext2D | null = null;
 
 // 警告标志
 let binarizedWarningPrinted = false;
@@ -1664,16 +1705,17 @@ let binarizedWarningPrinted = false;
 /**
  * 初始化二值化视频流显示
  */
-export function initializeBinarizedStream() {
+export function initializeBinarizedStream(): void {
   // 获取二值化图像容器
   const container = document.getElementById("binarized-widget");
   if (container) {
-    canvasBinarized = document.createElement("canvas");
-    canvasBinarized.width = DST_SIZE;
-    canvasBinarized.height = DST_SIZE;
-    canvasBinarized.style.cursor = "crosshair";
-    container.appendChild(canvasBinarized);
-    ctxBinarized = canvasBinarized.getContext("2d");
+    const c = document.createElement("canvas");
+    c.width = DST_SIZE;
+    c.height = DST_SIZE;
+    c.style.cursor = "crosshair";
+    container.appendChild(c);
+    canvasBinarized = c;
+    ctxBinarized = c.getContext("2d");
     console.log("[OK] 二值化视频流 Canvas 初始化完成");
   }
 
@@ -1696,44 +1738,45 @@ export function initializeBinarizedStream() {
   // 绑定前端二值化处理开关
   const enableCheckbox = document.getElementById(
     "checkBox_Enable_Client_Binarization",
-  );
+  ) as HTMLInputElement | null;
   const paramsContainer = document.getElementById("binarized-params-container");
   if (enableCheckbox) {
     enableCheckbox.addEventListener("change", (e) => {
-      BinarizedVideoState.enableClientBinarization = e.target.checked;
+      const checked = (e.target as HTMLInputElement).checked;
+      BinarizedVideoState.enableClientBinarization = checked;
 
       // 显示/隐藏参数设置区域
       if (paramsContainer) {
-        paramsContainer.style.display = e.target.checked ? "block" : "none";
+        paramsContainer.style.display = checked ? "block" : "none";
       }
     });
   }
 
   // 绑定阈值滑块
-  const thresholdSlider = document.getElementById("slider_Binarized_Threshold");
-  const thresholdInput = document.getElementById("input_Binarized_Threshold");
+  const thresholdSlider = document.getElementById("slider_Binarized_Threshold") as HTMLInputElement | null;
+  const thresholdInput = document.getElementById("input_Binarized_Threshold") as HTMLInputElement | null;
   if (thresholdSlider && thresholdInput) {
     // 滑块变化时更新数字输入框（前端处理，无需发送到服务器）
     thresholdSlider.addEventListener("input", (e) => {
-      const value = parseInt(e.target.value);
-      thresholdInput.value = value;
+      const value = parseInt((e.target as HTMLInputElement).value);
+      thresholdInput.value = String(value);
       BinarizedVideoState.threshold = value;
     });
 
     // 数字输入框变化时更新滑块
     thresholdInput.addEventListener("change", (e) => {
-      const value = Math.max(0, Math.min(255, parseInt(e.target.value) || 128));
-      thresholdInput.value = value;
-      thresholdSlider.value = value;
+      const value = Math.max(0, Math.min(255, parseInt((e.target as HTMLInputElement).value) || 128));
+      thresholdInput.value = String(value);
+      thresholdSlider.value = String(value);
       BinarizedVideoState.threshold = value;
     });
   }
 
   // 绑定反转复选框
-  const invertCheckbox = document.getElementById("checkBox_Binarized_Invert");
+  const invertCheckbox = document.getElementById("checkBox_Binarized_Invert") as HTMLInputElement | null;
   if (invertCheckbox) {
     invertCheckbox.addEventListener("change", (e) => {
-      BinarizedVideoState.invert = e.target.checked;
+      BinarizedVideoState.invert = (e.target as HTMLInputElement).checked;
     });
   }
 }
@@ -1744,7 +1787,7 @@ export function initializeBinarizedStream() {
  * @param {number} width - 图像宽度
  * @param {number} height - 图像高度
  */
-export function handleBinarizedFrame(frameData, width = 128, height = 128) {
+export function handleBinarizedFrame(frameData: Uint8Array, width = 128, height = 128): void {
   if (!ctxBinarized) {
     // 第一次调用时打印警告
     if (!binarizedWarningPrinted) {
@@ -1782,7 +1825,7 @@ export function handleBinarizedFrame(frameData, width = 128, height = 128) {
 /**
  * 启动二值化视频流
  */
-function startBinarizedStream() {
+function startBinarizedStream(): void {
   if (window.wsClient && window.wsClient.ws) {
     window.wsClient.ws.send(
       JSON.stringify({ type: "CONTROL_CMD", action: "START_BINARIZED_STREAM" }),
@@ -1794,7 +1837,7 @@ function startBinarizedStream() {
 /**
  * 停止二值化视频流
  */
-function stopBinarizedStream() {
+function stopBinarizedStream(): void {
   if (window.wsClient && window.wsClient.ws) {
     window.wsClient.ws.send(
       JSON.stringify({ type: "CONTROL_CMD", action: "STOP_BINARIZED_STREAM" }),

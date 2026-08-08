@@ -37,6 +37,8 @@
  */
 import { Utils, setLEDStatus } from "../main";
 import PacketManager from "./BinaryTableHelper";
+/** PacketManager.get() 返回的 helper 类型（BinaryTableHelper | null 的非空变体） */
+type BinaryTableHelper = NonNullable<ReturnType<typeof PacketManager.get>>;
 import wsClient from "./Client";
 import statusBar from "./StatusBar";
 import { triggerSJCJResolve } from "./ImageUpload";
@@ -50,22 +52,42 @@ import {
 } from "./Chart";
 import { updateLaserImage } from "./Laser";
 
+/** showSaveFilePicker 的最小类型声明（Chrome/Edge 实验 API，TS DOM lib 未含）。 */
+interface FileSystemWritableFileStream {
+  write: (data: Blob | BufferSource | string) => Promise<void>;
+  close: () => Promise<void>;
+}
+interface FileSystemFileHandleLocal {
+  createWritable: () => Promise<FileSystemWritableFileStream>;
+}
+interface WindowSaveFilePickerLocal extends Window {
+  showSaveFilePicker?: (options?: {
+    suggestedName?: string;
+    types?: Array<{
+      description?: string;
+      accept: Record<string, string[]>;
+    }>;
+  }) => Promise<FileSystemFileHandleLocal>;
+}
+
 const sendBuffer = new Uint8Array(1040);
 let isSJCJRunning = false;
-let resolveAck_SJCJ = null;
+let resolveAck_SJCJ: (() => void) | null = null;
 let isSJCJF000HRunning = false;
 let isSavingBFrame = false;
 let saveBFrameCount = 0;
 const MAX_SAVE_FRAMES = 1000000;
-let resolveAck_F000H_SJCJ = null;
-let sjcjF000HUpdatePromise = Promise.resolve();
+let resolveAck_F000H_SJCJ: (() => void) | null = null;
+let sjcjF000HUpdatePromise: Promise<void> = Promise.resolve();
 
-async function saveBinaryFile(bytes, filename) {
-  const blob = new Blob([bytes], { type: "application/octet-stream" });
+async function saveBinaryFile(bytes: Uint8Array, filename: string): Promise<void> {
+  // bytes.slice() 返回 Uint8Array<ArrayBuffer>，满足 BlobPart 类型约束
+  const blob = new Blob([bytes.slice()], { type: "application/octet-stream" });
 
-  if (typeof window.showSaveFilePicker === "function") {
+  const win = window as unknown as WindowSaveFilePickerLocal;
+  if (typeof win.showSaveFilePicker === "function") {
     try {
-      const handle = await window.showSaveFilePicker({
+      const handle = await win.showSaveFilePicker({
         suggestedName: filename,
         types: [
           {
@@ -79,7 +101,8 @@ async function saveBinaryFile(bytes, filename) {
       await writable.close();
       return;
     } catch (err) {
-      if (err.name === "AbortError") throw err;
+      const e = err as { name?: string };
+      if (e.name === "AbortError") throw err;
       console.warn("[CSZD3000H] showSaveFilePicker failed, fallback to download:", err);
     }
   }
@@ -103,25 +126,25 @@ let _f000hLastSendLog = 0;
 let _f000hLastRecvLog = 0;
 
 /** 供 ImageUpload.js 注册 F000H 单次发送的 resolve 回调 */
-export function setResolveAck_F000H_SJCJ(fn) { resolveAck_F000H_SJCJ = fn; }
+export function setResolveAck_F000H_SJCJ(fn: (() => void) | null): void { resolveAck_F000H_SJCJ = fn; }
 
 // ---- 校准扫描用 B 帧原始数据回调 ----
-let _bFrameRawCallback = null;
+let _bFrameRawCallback: ((data: Uint8Array) => void) | null = null;
 /** 注册每帧 B 帧数据回调，传 null 取消注册 */
-export function setBFrameRawCallback(fn) { _bFrameRawCallback = fn; }
+export function setBFrameRawCallback(fn: ((data: Uint8Array) => void) | null): void { _bFrameRawCallback = fn; }
 /** 获取 F000H 采集运行状态 */
-export function getSJCJF000HRunning() { return isSJCJF000HRunning; }
+export function getSJCJF000HRunning(): boolean { return isSJCJF000HRunning; }
 /** 外部启动 F000H 采集（若未运行则启动） */
-export function startSJCJF000H() {
+export function startSJCJF000H(): void {
   if (!isSJCJF000HRunning) {
     isSJCJF000HRunning = true;
     const btn = document.getElementById("pushButton_SJCJ_F000H_Send");
     if (btn) btn.innerText = "停止数据采集";
-    loadCommand_SJCJ_F000H();
+    void loadCommand_SJCJ_F000H();
   }
 }
 /** 外部停止 F000H 采集 */
-export function stopSJCJF000H() {
+export function stopSJCJF000H(): void {
   isSJCJF000HRunning = false;
   const btn = document.getElementById("pushButton_SJCJ_F000H_Send");
   if (btn) btn.innerText = "开始数据采集";
@@ -153,15 +176,15 @@ const requestSJCJF000HUpdate = () => {
   return sjcjF000HUpdatePromise;
 };
 
-const adjustSJCJF000HPresetValue = async (row, delta) => {
-  const table = document.getElementById("tableWidget_SJCJ_F000H_Send");
+const adjustSJCJF000HPresetValue = async (row: number, delta: number): Promise<void> => {
+  const table = document.getElementById("tableWidget_SJCJ_F000H_Send") as HTMLTableElement | null;
   const cell = table?.rows[row]?.cells[1];
   if (!cell) {
     console.warn(`[F000H] 预置角单元格不存在: row ${row}`);
     return;
   }
 
-  const input = cell.querySelector("input, select");
+  const input = cell.querySelector("input, select") as HTMLInputElement | HTMLSelectElement | null;
   const currentValue = Number.parseFloat(
     input ? input.value.trim() : cell.textContent.trim(),
   );
@@ -292,7 +315,7 @@ const editableCells_JGCSZD = () => {
   editableCells_CSZD
 );*/
 
-export function initializeCommandTables() {
+export function initializeCommandTables(): void {
   // 参数装订表格初始化
   initializeCSZDTable();
 
@@ -362,15 +385,19 @@ export function initializeCommandTables() {
   });
 
   // 非均匀校正 checkbox 互斥逻辑（同组只能选一个）
-  const makeExclusive = (selector) => {
+  const makeExclusive = (selector: string): void => {
     const boxes = document.querySelectorAll(selector);
     boxes.forEach((box) => {
-      box.addEventListener("change", () => {
-        if (box.checked) {
-          boxes.forEach((b) => { if (b !== box) b.checked = false; });
+      const checkbox = box as HTMLInputElement;
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) {
+          boxes.forEach((b) => {
+            const other = b as HTMLInputElement;
+            if (other !== checkbox) other.checked = false;
+          });
         } else {
           // 不允许全部取消勾选：若取消则保持当前勾选
-          box.checked = true;
+          checkbox.checked = true;
         }
       });
     });
@@ -380,8 +407,8 @@ export function initializeCommandTables() {
 
   // 非均匀校正
   document.getElementById("pushButton_FJYJZ")?.addEventListener("click", () => {
-    const jfdw = document.querySelector(".fjyjz-jfdw:checked")?.value;
-    const command = document.querySelector(".fjyjz-cmd:checked")?.value;
+    const jfdw = (document.querySelector(".fjyjz-jfdw:checked") as HTMLInputElement | null)?.value;
+    const command = (document.querySelector(".fjyjz-cmd:checked") as HTMLInputElement | null)?.value;
     console.log("非均匀校正: 积分档位=", jfdw, "命令=", command);
     loadCommand_FJYJZ();
   });
@@ -469,12 +496,12 @@ export function initializeCommandTables() {
     if (isSJCJRunning === true) {
       isSJCJRunning = false;
 
-      btn.innerText = "开始数据采集";
+      if (btn) btn.innerText = "开始数据采集";
       return;
     } else {
       isSJCJRunning = true;
-      btn.innerText = "停止数据采集";
-      loadCommand_SJCJ();
+      if (btn) btn.innerText = "停止数据采集";
+      void loadCommand_SJCJ();
     }
   });
 
@@ -517,8 +544,8 @@ export function initializeCommandTables() {
 
       // 重新开始（无论之前是否运行）
       isSJCJRunning = true;
-      btn.innerText = "停止数据采集";
-      loadCommand_SJCJ();
+      if (btn) btn.innerText = "停止数据采集";
+      void loadCommand_SJCJ();
 
       statusBar.successMessage("A帧参数已更新，数据采集已重启");
     });
@@ -570,12 +597,12 @@ export function initializeCommandTables() {
       if (isSJCJF000HRunning === true) {
         isSJCJF000HRunning = false;
 
-        btn.innerText = "开始数据采集";
+        if (btn) btn.innerText = "开始数据采集";
         return;
       } else {
         isSJCJF000HRunning = true;
-        btn.innerText = "停止数据采集";
-        loadCommand_SJCJ_F000H();
+        if (btn) btn.innerText = "停止数据采集";
+        void loadCommand_SJCJ_F000H();
       }
     });
 
@@ -586,12 +613,12 @@ export function initializeCommandTables() {
 
       if (isSavingBFrame) {
         isSavingBFrame = false;
-        btn.innerText = "开始保存A/B帧";
+        if (btn) btn.innerText = "开始保存A/B帧";
         stopSavingCMD();
       } else {
         isSavingBFrame = true;
         saveBFrameCount = 0;
-        btn.innerText = "停止保存A/B帧";
+        if (btn) btn.innerText = "停止保存A/B帧";
         startSavingBFrame();
       }
     });
@@ -644,7 +671,7 @@ export function initializeCommandTables() {
         });
 }
 
-function initializeCSZDTable() {
+function initializeCSZDTable(): void {
   Utils.loadCSVToTable("./csv/CSZD.csv", "tableWidget_CSZD", 35, 2);
   Utils.centerAlignTable("tableWidget_CSZD");
 
@@ -677,7 +704,7 @@ function initializeCSZDTable() {
   }, 200);
 }
 
-function initializeGDCSZDTable() {
+function initializeGDCSZDTable(): void {
   Utils.loadCSVToTable("./csv/GDCSZD_Send.csv", "tableWidget_GDCSZD", 8, 4);
   Utils.loadCSVToTable(
     "./csv/GDCSZD_Recv.csv",
@@ -689,7 +716,7 @@ function initializeGDCSZDTable() {
   Utils.centerAlignTable("tableWidget_GDCSZD_Recv");
 }
 
-function initializeJGCSZDTable() {
+function initializeJGCSZDTable(): void {
   Utils.loadCSVToTable("./csv/JGCSZD_Send.csv", "tableWidget_JGCSZD", 36, 6);
   Utils.loadCSVToTable("./csv/JGCSZDXC_Recv.csv", "tableWidget_JGXC", 36, 4);
   Utils.centerAlignTable("tableWidget_JGCSZD");
@@ -698,7 +725,7 @@ function initializeJGCSZDTable() {
   Utils.setEditableCells("tableWidget_JGCSZD", editableCells_JGCSZD());
 }
 
-function initializeSJCJTable() {
+function initializeSJCJTable(): void {
   Utils.loadCSVToTable("./csv/SJCJ_Send.csv", "tableWidget_SJCJ_Send", 49, 2);
   Utils.centerAlignTable("tableWidget_SJCJ_Send");
   Utils.setEditableCells("tableWidget_SJCJ_Send", editableCells_SJCSY);
@@ -743,7 +770,7 @@ function initializeSJCJTable() {
   }, 200);
 }
 
-function initializeIRDetectTable() {
+function initializeIRDetectTable(): void {
   // 发送表格 (28行 x 8列 = 224个单元格，但 MyTableFile 参数是70)
   Utils.loadCSVToTable(
     "./csv/IRDetectParam_Send.csv",
@@ -766,7 +793,7 @@ function initializeIRDetectTable() {
 
   // 设置接收表格为只读
   setTimeout(() => {
-    const recvTable = document.getElementById("tableWidget_IRDetect_Recv");
+    const recvTable = document.getElementById("tableWidget_IRDetect_Recv") as HTMLTableElement | null;
     if (recvTable) {
       Array.from(recvTable.rows).forEach((row, rowIndex) => {
         Array.from(row.cells).forEach((cell, colIndex) => {
@@ -781,7 +808,7 @@ function initializeIRDetectTable() {
   }, 200);
 }
 
-function initializeSJCJF000HTable() {
+function initializeSJCJF000HTable(): void {
   // 发送表格 - 28行 x 2列
   Utils.loadCSVToTable(
     "./csv/SJCJ_F000H_Send.csv",
@@ -1008,7 +1035,7 @@ const CSZD3000H_PROJECTS = Object.freeze([
  * 生成协议线上的 3000H 载荷：
  * 主参数前段（截至置信度参数） + 卷积核 + 主参数后段。
  */
-function buildCSZD3000HWirePayload(mainPayload, matrixPayload) {
+function buildCSZD3000HWirePayload(mainPayload: Uint8Array, matrixPayload: Uint8Array): Uint8Array {
   const { mainPayloadBytes, matrixBytes, matrixInsertOffset } =
     CSZD3000H_LAYOUT;
 
@@ -1037,7 +1064,7 @@ function buildCSZD3000HWirePayload(mainPayload, matrixPayload) {
  * 下传报文采用协议线布局，但现有接收 helper 的内部布局仍是
  * “完整主参数 + 卷积核”。解析前先恢复为 helper 所需顺序。
  */
-function restoreCSZD3000HHelperLayout(wireData) {
+function restoreCSZD3000HHelperLayout(wireData: ArrayBuffer | Uint8Array): Uint8Array | null {
   const source =
     wireData instanceof Uint8Array ? wireData : new Uint8Array(wireData);
   const { mainPayloadBytes, matrixBytes, matrixInsertOffset } =
@@ -1103,26 +1130,26 @@ const CSZD3000H_VALID_FLAG_SELECT_ALL = Object.freeze([
   },
 ]);
 
-function updateCSZD3000HSelectAllState(selectAllId, checkboxIds) {
-  const selectAll = document.getElementById(selectAllId);
+function updateCSZD3000HSelectAllState(selectAllId: string, checkboxIds: string[]): void {
+  const selectAll = document.getElementById(selectAllId) as HTMLInputElement | null;
   if (!selectAll) return;
 
   const checkboxes = checkboxIds
-    .map((checkboxId) => document.getElementById(checkboxId))
-    .filter(Boolean);
+    .map((checkboxId) => document.getElementById(checkboxId) as HTMLInputElement | null)
+    .filter((c): c is HTMLInputElement => c !== null);
   const checkedCount = checkboxes.filter((checkbox) => checkbox.checked).length;
   selectAll.checked = checkboxes.length > 0 && checkedCount === checkboxes.length;
   selectAll.indeterminate = checkedCount > 0 && checkedCount < checkboxes.length;
 }
 
-function setupCSZD3000HSelectAllCheckboxes() {
+function setupCSZD3000HSelectAllCheckboxes(): void {
   CSZD3000H_VALID_FLAG_SELECT_ALL.forEach(({ selectAllId, checkboxIds }) => {
-    const selectAll = document.getElementById(selectAllId);
+    const selectAll = document.getElementById(selectAllId) as HTMLInputElement | null;
     if (!selectAll) return;
 
     selectAll.addEventListener("change", () => {
       checkboxIds.forEach((checkboxId) => {
-        const checkbox = document.getElementById(checkboxId);
+        const checkbox = document.getElementById(checkboxId) as HTMLInputElement | null;
         if (checkbox) checkbox.checked = selectAll.checked;
       });
       selectAll.indeterminate = false;
@@ -1137,7 +1164,7 @@ function setupCSZD3000HSelectAllCheckboxes() {
   });
 }
 
-function createCSZD3000HSelect(fieldName, direction) {
+function createCSZD3000HSelect(fieldName: string, direction: string): HTMLSelectElement | null {
   if (direction !== "send") return null;
 
   const select = document.createElement("select");
@@ -1175,7 +1202,7 @@ function createCSZD3000HSelect(fieldName, direction) {
   return select;
 }
 
-function createCSZD3000HFieldControl(fieldName, direction, fieldIndex) {
+function createCSZD3000HFieldControl(fieldName: string, direction: string, fieldIndex: number): HTMLElement {
   if (direction === "recv") {
     const value = document.createElement("span");
     value.className = "cszd3000h-recv-value";
@@ -1203,11 +1230,11 @@ function createCSZD3000HFieldControl(fieldName, direction, fieldIndex) {
   return input;
 }
 
-function createCSZD3000HFieldList(fieldNames, direction, fieldIndexRef) {
+function createCSZD3000HFieldList(fieldNames: string[] | undefined, direction: string, fieldIndexRef: { value: number }): HTMLDivElement {
   const list = document.createElement("div");
   list.className = "cszd3000h-field-list";
 
-  fieldNames.forEach((fieldName) => {
+  (fieldNames ?? []).forEach((fieldName) => {
     const row = document.createElement("div");
     row.className = "cszd3000h-field-row";
     const label = document.createElement("span");
@@ -1226,7 +1253,7 @@ function createCSZD3000HFieldList(fieldNames, direction, fieldIndexRef) {
   return list;
 }
 
-function createCSZD3000HMatrix(direction) {
+function createCSZD3000HMatrix(direction: string): HTMLTableElement {
   const matrix = document.createElement("table");
   matrix.className = "cszd3000h-matrix table-fixed";
   const firstIndex = direction === "send" ? 1 : 48;
@@ -1236,18 +1263,19 @@ function createCSZD3000HMatrix(direction) {
     for (let colIndex = 0; colIndex < 7; colIndex++) {
       const cell = document.createElement("td");
       const helperIndex = firstIndex + rowIndex * 7 + colIndex;
-      const control =
+      const control: HTMLElement =
         direction === "send"
           ? document.createElement("input")
           : document.createElement("span");
 
       if (direction === "send") {
-        control.type = "number";
-        control.step = "any";
-        control.value = "0";
-        control.dataset.cszdDirection = direction;
-        control.dataset.cszdHelper = "CSZD_Send_3000H_JJHCS";
-        control.dataset.cszdIndex = String(helperIndex);
+        const input = control as HTMLInputElement;
+        input.type = "number";
+        input.step = "any";
+        input.value = "0";
+        input.dataset.cszdDirection = direction;
+        input.dataset.cszdHelper = "CSZD_Send_3000H_JJHCS";
+        input.dataset.cszdIndex = String(helperIndex);
       } else {
         control.className = "cszd3000h-recv-value";
         control.dataset.cszdDirection = direction;
@@ -1263,14 +1291,14 @@ function createCSZD3000HMatrix(direction) {
   return matrix;
 }
 
-function renderCSZD3000HProjectTable() {
+function renderCSZD3000HProjectTable(): void {
   const container = document.getElementById("cszd3000h-project-table-container");
   if (!container) return;
 
   container.replaceChildren();
   const fieldIndexRef = { value: 0 };
 
-  const appendHeader = (table) => {
+  const appendHeader = (table: HTMLTableElement): void => {
     const header = document.createElement("thead");
     const row = document.createElement("tr");
     ["装订项目", "装订参数", "下传参数"].forEach((text) => {
@@ -1282,7 +1310,7 @@ function renderCSZD3000HProjectTable() {
     table.appendChild(header);
   };
 
-  const createProjectRow = (project) => {
+  const createProjectRow = (project: typeof CSZD3000H_PROJECTS[number]): HTMLTableRowElement => {
     const row = document.createElement("tr");
     row.className = "cszd3000h-project-row";
 
@@ -1313,33 +1341,41 @@ function renderCSZD3000HProjectTable() {
     return row;
   };
 
-  const distributeProjects = (projects, laneCount) => {
-    const lanes = Array.from({ length: laneCount }, () => ({
+  const distributeProjects = (
+    projects: typeof CSZD3000H_PROJECTS,
+    laneCount: number,
+  ): Array<{ weight: number; projects: Array<typeof CSZD3000H_PROJECTS[number]> }> => {
+    type ProjectEntry = typeof CSZD3000H_PROJECTS[number];
+    type Lane = { weight: number; projects: Array<{ project: ProjectEntry; order: number }> };
+    const lanes: Lane[] = Array.from({ length: laneCount }, () => ({
       weight: 0,
       projects: [],
     }));
-    projects
-      .map((project, order) => ({ project, order }))
-      .sort(
-        (a, b) =>
-          (b.project.fields?.length ?? 1) -
-          (a.project.fields?.length ?? 1),
-      )
-      .forEach(({ project, order }) => {
-        const lane = lanes.reduce((best, current) =>
-          current.weight < best.weight ? current : best,
-        );
-        lane.projects.push({ project, order });
-        lane.weight += Math.max(1, project.fields?.length ?? 1);
-      });
-    lanes.forEach((lane) => {
-      lane.projects.sort((a, b) => a.order - b.order);
-      lane.projects = lane.projects.map(({ project }) => project);
+    const indexed: Array<{ project: ProjectEntry; order: number }> =
+      projects.map((project, order) => ({ project, order }));
+    indexed.sort(
+      (a, b) =>
+        (b.project.fields?.length ?? 1) -
+        (a.project.fields?.length ?? 1),
+    );
+    indexed.forEach(({ project, order }) => {
+      const lane = lanes.reduce((best, current) =>
+        current.weight < best.weight ? current : best,
+      );
+      lane.projects.push({ project, order });
+      lane.weight += Math.max(1, project.fields?.length ?? 1);
     });
-    return lanes;
+    const result: Array<{ weight: number; projects: ProjectEntry[] }> = lanes.map((lane) => {
+      lane.projects.sort((a, b) => a.order - b.order);
+      return {
+        weight: lane.weight,
+        projects: lane.projects.map(({ project }) => project),
+      };
+    });
+    return result;
   };
 
-  const createSection = (flag, title, laneCount) => {
+  const createSection = (flag: number, title: string, laneCount: number): HTMLElement => {
     const section = document.createElement("section");
     section.className = `cszd3000h-project-section cszd3000h-flag-${flag}`;
     const titleNode = document.createElement("div");
@@ -1411,10 +1447,11 @@ function renderCSZD3000HProjectTable() {
   }
 }
 
-function setCSZD3000HSendFieldValue(fieldName, value) {
+function setCSZD3000HSendFieldValue(fieldName: string, value: string | number): void {
   document
     .querySelectorAll('[data-cszd-direction="send"][data-cszd-field]')
-    .forEach((control) => {
+    .forEach((el) => {
+      const control = el as HTMLInputElement | HTMLSelectElement;
       if (control.dataset.cszdField !== fieldName) return;
       if (fieldName === CSZD3000H_FIELDS.laserAmplifierGain) {
         const gainIndex = Number(value);
@@ -1423,12 +1460,12 @@ function setCSZD3000HSendFieldValue(fieldName, value) {
           ? `${gainIndex}:${gainLabels[gainIndex] ?? "1"}倍`
           : "0:1倍";
       } else {
-        control.value = value;
+        control.value = String(value);
       }
     });
 }
 
-function parseCSZD3000HValueMap(csvText) {
+function parseCSZD3000HValueMap(csvText: string): Map<string, string> {
   const values = new Map();
   csvText
     .trim()
@@ -1444,7 +1481,7 @@ function parseCSZD3000HValueMap(csvText) {
   return values;
 }
 
-async function loadCSZD3000HSendDefaults() {
+async function loadCSZD3000HSendDefaults(): Promise<void> {
   try {
     const [mainResponse, matrixResponse] = await Promise.all([
       fetch("./csv/CSZD_Send_3000H.csv"),
@@ -1465,7 +1502,8 @@ async function loadCSZD3000HSendDefaults() {
       .querySelectorAll(
         '[data-cszd-direction="send"][data-cszd-helper="CSZD_Send_3000H_JJHCS"]',
       )
-      .forEach((control, index) => {
+      .forEach((el, index) => {
+        const control = el as HTMLInputElement | HTMLSelectElement;
         if (matrixValues[index] !== undefined) control.value = matrixValues[index];
       });
   } catch (error) {
@@ -1473,8 +1511,8 @@ async function loadCSZD3000HSendDefaults() {
   }
 }
 
-function syncCSZD3000HFormToHelpers(helper, matrixHelper) {
-  const specialFields = new Set([
+function syncCSZD3000HFormToHelpers(helper: BinaryTableHelper, matrixHelper: BinaryTableHelper): boolean {
+  const specialFields: Set<string> = new Set([
     CSZD3000H_FIELDS.laserBlindZone,
     CSZD3000H_FIELDS.laserAmplifierGain,
     CSZD3000H_FIELDS.aimingPointMode,
@@ -1484,8 +1522,9 @@ function syncCSZD3000HFormToHelpers(helper, matrixHelper) {
 
   document
     .querySelectorAll('[data-cszd-direction="send"][data-cszd-field]')
-    .forEach((control) => {
-      const fieldName = control.dataset.cszdField;
+    .forEach((el) => {
+      const control = el as HTMLInputElement | HTMLSelectElement;
+      const fieldName = control.dataset.cszdField ?? "";
       if (specialFields.has(fieldName) || control.value.trim() === "") return;
       if (!helper.setValueByName(fieldName, control.value)) success = false;
     });
@@ -1494,7 +1533,8 @@ function syncCSZD3000HFormToHelpers(helper, matrixHelper) {
     .querySelectorAll(
       '[data-cszd-direction="send"][data-cszd-helper="CSZD_Send_3000H_JJHCS"]',
     )
-    .forEach((control) => {
+    .forEach((el) => {
+      const control = el as HTMLInputElement | HTMLSelectElement;
       if (control.value.trim() === "") return;
       if (!matrixHelper.setValue(Number(control.dataset.cszdIndex), control.value)) {
         success = false;
@@ -1503,11 +1543,12 @@ function syncCSZD3000HFormToHelpers(helper, matrixHelper) {
   return success;
 }
 
-function renderCSZD3000HFormFromHelper(helper, matrixHelper) {
+function renderCSZD3000HFormFromHelper(helper: BinaryTableHelper, matrixHelper: BinaryTableHelper): void {
   document
     .querySelectorAll('[data-cszd-direction="recv"][data-cszd-field]')
-    .forEach((control) => {
-      const value = helper.getValueByName(control.dataset.cszdField);
+    .forEach((el) => {
+      const control = el as HTMLElement;
+      const value = helper.getValueByName(control.dataset.cszdField ?? "");
       if (value !== "ERR") control.textContent = value;
     });
 
@@ -1515,14 +1556,15 @@ function renderCSZD3000HFormFromHelper(helper, matrixHelper) {
     .querySelectorAll(
       '[data-cszd-direction="recv"][data-cszd-helper="CSZD_Recv_3000H"]',
     )
-    .forEach((control) => {
+    .forEach((el) => {
+      const control = el as HTMLElement;
       control.textContent = matrixHelper.getValue(
         Number(control.dataset.cszdIndex),
       );
     });
 }
 
-function initializeCSZD3000HTable() {
+function initializeCSZD3000HTable(): void {
   renderCSZD3000HProjectTable();
   setupCSZD3000HSelectAllCheckboxes();
   void loadCSZD3000HSendDefaults();
@@ -1567,26 +1609,26 @@ const loadCommand_CSZD = () => {
 
   helper.updateAllFromTable("tableWidget_CSZD");
 
-  const gzmsMap = {
+  const gzmsMap: Record<string, number> = {
     "00H 默认模式": 0x00,
     "11H 红外独立制导": 0x11,
     "22H 激光独立制导": 0x22,
     "33H 复合制导": 0x33,
   };
-  const gzms = document.getElementById("comboBox_GZMS")?.value || "默认模式";
+  const gzms = (document.getElementById("comboBox_GZMS") as HTMLSelectElement | null)?.value || "默认模式";
   helper.setValue(1, gzmsMap[gzms] ?? 0x00);
 
-  const mblxMap = {
+  const mblxMap: Record<string, number> = {
     "00H: 未知": 0x00,
     "11H: 飞机": 0x11,
     "22H: 地空导弹": 0x22,
     "33H: 空空导弹": 0x33,
     "44H: 巡航导弹": 0x44,
   };
-  const mblx = document.getElementById("comboBox_MBLX")?.value || "未知";
+  const mblx = (document.getElementById("comboBox_MBLX") as HTMLSelectElement | null)?.value || "未知";
   helper.setValue(2, mblxMap[mblx] ?? 0x00);
 
-  const cjbsMap = {
+  const cjbsMap: Record<string, number> = {
     "00H: 未知": 0x00,
     "11H：天空": 0x11,
     "22H：地物": 0x22,
@@ -1595,32 +1637,32 @@ const loadCommand_CSZD = () => {
     "55H：海空": 0x55,
     "66H：地海": 0x66,
   };
-  const cjbs = document.getElementById("comboBox_CJBS")?.value || "未知";
+  const cjbs = (document.getElementById("comboBox_CJBS") as HTMLSelectElement | null)?.value || "未知";
   helper.setValue(3, cjbsMap[cjbs] ?? 0x00);
 
   // ==================== 特殊处理：状态字====================
   let ztzLow = 0;
-  if (document.getElementById("radioButton_YJ")?.checked) ztzLow |= 0b11;
-  if (document.getElementById("radioButton_YQF")?.checked) ztzLow |= 0b1100;
-  if (document.getElementById("radioButton_GR")?.checked) ztzLow |= 0b110000;
-  if (document.getElementById("radioButton_ZHL")?.checked) ztzLow |= 0b01000000;
-  if (document.getElementById("radioButton_YHL")?.checked) ztzLow |= 0b10000000;
+  if ((document.getElementById("radioButton_YJ") as HTMLInputElement | null)?.checked) ztzLow |= 0b11;
+  if ((document.getElementById("radioButton_YQF") as HTMLInputElement | null)?.checked) ztzLow |= 0b1100;
+  if ((document.getElementById("radioButton_GR") as HTMLInputElement | null)?.checked) ztzLow |= 0b110000;
+  if ((document.getElementById("radioButton_ZHL") as HTMLInputElement | null)?.checked) ztzLow |= 0b01000000;
+  if ((document.getElementById("radioButton_YHL") as HTMLInputElement | null)?.checked) ztzLow |= 0b10000000;
 
   let ztzHigh = 0;
-  if (document.getElementById("radioButton_YG")?.checked) ztzHigh |= 0b01;
-  if (document.getElementById("radioButton_WZ")?.checked) ztzHigh |= 0b10;
+  if ((document.getElementById("radioButton_YG") as HTMLInputElement | null)?.checked) ztzHigh |= 0b01;
+  if ((document.getElementById("radioButton_WZ") as HTMLInputElement | null)?.checked) ztzHigh |= 0b10;
 
   helper.setValue(6, ztzLow | (ztzHigh << 8));
 
   //处理激光放大器增益
-  const LaserAmplifierGainMap = {
+  const LaserAmplifierGainMap: Record<string, number> = {
     "0 1倍": 0,
     "1 0.8倍": 1,
     "2 0.6倍": 2,
     "3 0.4倍": 3,
   };
   const LaserAmplifierGain =
-    document.getElementById("comboBox_LaserAmplifierGain")?.value || "0 1倍";
+    (document.getElementById("comboBox_LaserAmplifierGain") as HTMLSelectElement | null)?.value || "0 1倍";
   helper.setValue(10, LaserAmplifierGainMap[LaserAmplifierGain] ?? 0);
 
   // ==================== 组装发送包 ====================
@@ -1672,7 +1714,7 @@ const loadCommand_CSZD = () => {
   console.log("已发送参数装订命令");
 };
 
-export const handle_CSZD_Recv_0100H = (data) => {
+export const handle_CSZD_Recv_0100H = (data: Uint8Array): void => {
   console.log("[DataHandler] 参数装订应答");
   statusBar.receiveMessage("参数装订应答", "0100H");
 
@@ -1720,7 +1762,7 @@ const loadCommand_MBKZ = () => {
  * @param {Uint8Array} data 目标控制参数装订下传应答0200H
  * @returns
  */
-export const handle_CSZD_Recv_0200H = (data) => {
+export const handle_CSZD_Recv_0200H = (data: Uint8Array): void => {
   console.log("[DataHandler] 目标控制参数装订下传应答");
   statusBar.receiveMessage("目标控制参数装订下传应答", "0200H");
 
@@ -1747,7 +1789,7 @@ export const handle_CSZD_Recv_0200H = (data) => {
 /**
  * 从 Helper 更新接收表格（使用正确的索引-行号映射）
  */
-function updateCSZDRecvFromHelper(helper) {
+function updateCSZDRecvFromHelper(helper: BinaryTableHelper): void {
   // 需要跳过的索引（特殊处理的字段）
   const skipIndexes = new Set([
     1,
@@ -1783,39 +1825,39 @@ function updateCSZDRecvFromHelper(helper) {
  * @param {Uint8Array} data - 原始数据
  * @param {BinaryTableHelper} helper - Helper 实例
  */
-function updateCSZDRecvSpecialFields(data, helper) {
+function updateCSZDRecvSpecialFields(data: Uint8Array, helper: BinaryTableHelper): void {
   const gzmsValue = data[0];
-  const gzmsText =
-    {
+  const gzmsText: string =
+    ({
       0x00: "00H 默认模式",
       0x11: "11H 红外独立制导",
       0x22: "22H 激光独立制导",
       0x33: "33H 复合制导",
-    }[gzmsValue] || `N/A (0x${gzmsValue.toString(16)})`;
+    } as Record<number, string>)[gzmsValue] || `N/A (0x${gzmsValue.toString(16)})`;
 
   Utils.setTableCellText("tableWidget_CSZD_Recv", 0, 1, gzmsText);
 
-  const textEdit_GZMS = document.getElementById("textEdit_GZMS");
+  const textEdit_GZMS = document.getElementById("textEdit_GZMS") as HTMLInputElement | HTMLTextAreaElement | null;
   if (textEdit_GZMS) textEdit_GZMS.value = gzmsText;
 
   const mblxValue = data[1];
-  const mblxText =
-    {
+  const mblxText: string =
+    ({
       0x00: "00H 未知",
       0x11: "11H 飞机",
       0x22: "22H 地空导弹",
       0x33: "33H 空空导弹",
       0x44: "44H 巡航导弹",
-    }[mblxValue] || `N/A (0x${mblxValue.toString(16)})`;
+    } as Record<number, string>)[mblxValue] || `N/A (0x${mblxValue.toString(16)})`;
 
   Utils.setTableCellText("tableWidget_CSZD_Recv", 1, 1, mblxText);
 
-  const textEdit_DJMBLX = document.getElementById("textEdit_DJMBLX");
+  const textEdit_DJMBLX = document.getElementById("textEdit_DJMBLX") as HTMLInputElement | HTMLTextAreaElement | null;
   if (textEdit_DJMBLX) textEdit_DJMBLX.value = mblxText;
 
   const cjbsValue = data[2];
-  const cjbsText =
-    {
+  const cjbsText: string =
+    ({
       0x00: "00H 未知",
       0x11: "11H 天空",
       0x22: "22H 地物",
@@ -1823,11 +1865,11 @@ function updateCSZDRecvSpecialFields(data, helper) {
       0x44: "44H 临边（天空+地物）",
       0x55: "55H 海空",
       0x66: "66H 地海",
-    }[cjbsValue] || `N/A (0x${cjbsValue.toString(16)})`;
+    } as Record<number, string>)[cjbsValue] || `N/A (0x${cjbsValue.toString(16)})`;
 
   Utils.setTableCellText("tableWidget_CSZD_Recv", 2, 1, cjbsText);
 
-  const textEdit_HWCJBS = document.getElementById("textEdit_HWCJBS");
+  const textEdit_HWCJBS = document.getElementById("textEdit_HWCJBS") as HTMLInputElement | HTMLTextAreaElement | null;
   if (textEdit_HWCJBS) textEdit_HWCJBS.value = cjbsText;
 
   const ztzLow = data[6]; // 低字节
@@ -1882,13 +1924,13 @@ function updateCSZDRecvSpecialFields(data, helper) {
   Utils.setTableCellText("tableWidget_2", 4, 1, ygwzText);
 
   const gainValue = data[14];
-  const gainText =
-    {
+  const gainText: string =
+    ({
       0: "1倍",
       1: "0.8倍",
       2: "0.6倍",
       3: "0.4倍",
-    }[gainValue] || `N/A (${gainValue})`;
+    } as Record<number, string>)[gainValue] || `N/A (${gainValue})`;
 
   Utils.setTableCellText("tableWidget_CSZD_Recv", 9, 1, gainText);
 
@@ -1966,7 +2008,7 @@ const loadCommand_GDCSZD = () => {
  * @param {Uint8Array} data 固定参数装订应答0300H
  * @returns
  */
-export const handle_GDCSZD_Recv_0300H = (data) => {
+export const handle_GDCSZD_Recv_0300H = (data: Uint8Array): void => {
   console.log("[DataHandler] 固定参数装订应答");
 
   if (!data || data.length < 1) {
@@ -2012,7 +2054,7 @@ const loadCommand_GDCSZDXC = () => {
  * @param {Uint8Array} data 固定参数装订下传应答0400H
  * @returns
  */
-export const handle_GDCSZDXC_Recv_0400H = (data) => {
+export const handle_GDCSZDXC_Recv_0400H = (data: Uint8Array): void => {
   console.log("[DataHandler] 固定参数装订下传应答");
   statusBar.receiveMessage("固定参数装订下传应答", "0400H");
 
@@ -2054,20 +2096,20 @@ const loadCommand_Shut = () => {
   sendBuffer[15] = 0x10; //1000H
   sendBuffer[16] = 0x03;
 
-  const sleep_hongwai=document.getElementById("sleep-hongwai");
-  if(sleep_hongwai.value=="红外休眠"){
+  const sleep_hongwai=document.getElementById("sleep-hongwai") as HTMLSelectElement | HTMLInputElement | null;
+  if(sleep_hongwai?.value=="红外休眠"){
     sendBuffer[16]|=(0x03);
   }else{
     sendBuffer[16]&=(0xfc);
   }
-  const sleep_jg=document.getElementById("sleep-jg");
-  if(sleep_jg.value=="激光休眠"){
+  const sleep_jg=document.getElementById("sleep-jg") as HTMLSelectElement | HTMLInputElement | null;
+  if(sleep_jg?.value=="激光休眠"){
     sendBuffer[16]|=(0x03<<2);
   }else{
     sendBuffer[16]&=0xf3;
   }
-  const sleep_sjl=document.getElementById("sleep-sjl");
-  if(sleep_sjl.value=="数据链休眠"){
+  const sleep_sjl=document.getElementById("sleep-sjl") as HTMLSelectElement | HTMLInputElement | null;
+  if(sleep_sjl?.value=="数据链休眠"){
     sendBuffer[16]|=(0x03<<4);
   }else{
     sendBuffer[16]&=0xc0;
@@ -2080,7 +2122,7 @@ const loadCommand_Shut = () => {
 /**
  * 休眠应答1000H
  */
-export const handle_Shut_0004H = (data) => {
+export const handle_Shut_0004H = (data: Uint8Array): void => {
   console.log("休眠应答：", data[0]);
     if (data[0] == 0x03) {
         console.log("[DataHandler] 休眠应答 - 成功");
@@ -2117,20 +2159,20 @@ const loadCommand_Wake = () => {
   sendBuffer[15] = 0x20; //2000H
   sendBuffer[16] = 0x03;
 
-  const wake_hongwai=document.getElementById("wake-hongwai");
-  if(wake_hongwai.value=="红外唤醒"){
+  const wake_hongwai=document.getElementById("wake-hongwai") as HTMLSelectElement | HTMLInputElement | null;
+  if(wake_hongwai?.value=="红外唤醒"){
     sendBuffer[16]|=(0x03);
   }/*else{
     sendBuffer[16]&=(0xfc);
   }*/
-  const wake_jg=document.getElementById("wake-jg");
-  if(wake_jg.value=="激光唤醒"){
+  const wake_jg=document.getElementById("wake-jg") as HTMLSelectElement | HTMLInputElement | null;
+  if(wake_jg?.value=="激光唤醒"){
     sendBuffer[16]|=(0x03<<2);
   }/*else{
     sendBuffer[16]&=0xf3;
   }*/
-  const wake_sjl=document.getElementById("wake-sjl");
-  if(wake_sjl.value=="数据链唤醒"){
+  const wake_sjl=document.getElementById("wake-sjl") as HTMLSelectElement | HTMLInputElement | null;
+  if(wake_sjl?.value=="数据链唤醒"){
     sendBuffer[16]|=(0x03<<4);
   }/*else{
     sendBuffer[16]&=0xc0;
@@ -2143,7 +2185,7 @@ const loadCommand_Wake = () => {
 /**
  * 唤醒应答 2000H
  */
-export const handle_Wake_0001H = (data) => {
+export const handle_Wake_0001H = (data: Uint8Array): void => {
   console.log("唤醒应答：", data[0]);
   
 
@@ -2186,7 +2228,7 @@ const loadCommand_BBH = () => {
   statusBar.sendMessage("软件版本号查询", "0020H");
 };
 
-export const handle_BBH_0030H = (data) => {
+export const handle_BBH_0030H = (data: Uint8Array): void => {
   console.log("[DataHandler] 收到软件版本号应答");
   console.log("软件版本号应答：", data);
   statusBar.receiveMessage("软件版本号应答", "0020H");
@@ -2327,7 +2369,7 @@ const loadCommand_GetSelfTestResult = () => {
 /**
  * 取自检结果回复
  */
-export const handle_GetSelfTestResult_0010H = (data) => {
+export const handle_GetSelfTestResult_0010H = (data: Uint8Array): void => {
   console.log("[DataHandler] 收到自检结果回复 (0010H)");
   statusBar.receiveMessage("收到自检结果回复", "0010H");
 
@@ -2345,8 +2387,8 @@ export const handle_GetSelfTestResult_0010H = (data) => {
 
   const tableId = "tableWidget_ZJJG";
 
-  const setStatus = (index, status) => {
-    let row, col;
+  const setStatus = (index: number, status: string): void => {
+    let row: number, col: number;
     if (index <= 13) {
       row = index - 1;
       col = 1; // 第 2 列 (索引 1)
@@ -2358,7 +2400,7 @@ export const handle_GetSelfTestResult_0010H = (data) => {
     Utils.setTableCellText(tableId, row, col, status);
   };
 
-  const checkBit = (data, bitPos, index) => {
+  const checkBit = (data: number, bitPos: number, index: number): void => {
     const check = (data >> bitPos) & 1;
     if (check == 0) {
       setStatus(index, "正常");
@@ -2455,8 +2497,8 @@ const loadCommand_FJYJZ = () => {
   sendBuffer[13] = 0x52; // AT_JK
   sendBuffer[14] = 0x00;
   sendBuffer[15] = 0x70; //7000H
-  const combox_JFDWD47 = document.querySelector(".fjyjz-jfdw:checked");
-  const comboBox_FJYJZCommand = document.querySelector(".fjyjz-cmd:checked");
+  const combox_JFDWD47 = document.querySelector(".fjyjz-jfdw:checked") as HTMLInputElement | null;
+  const comboBox_FJYJZCommand = document.querySelector(".fjyjz-cmd:checked") as HTMLInputElement | null;
   // 从选中的 checkbox 的 value 属性读取对应十六进制值
   const value_FJYJZ_D47 = combox_JFDWD47 ? parseInt(combox_JFDWD47.value, 16) : 0x00;
   const value_FJYJZ_cmd = comboBox_FJYJZCommand ? parseInt(comboBox_FJYJZCommand.value, 16) : 0x01;
@@ -2477,7 +2519,7 @@ const loadCommand_FJYJZ = () => {
 /**
  * 非均匀校正应答7000H
  */
-export const handle_FJYJZ_Recv_0020H = (data) => {
+export const handle_FJYJZ_Recv_0020H = (data: Uint8Array): void => {
   console.log("[DataHandler] 非均匀校正应答");
   if (data[0] == 0x0f) {
     console.log("非均匀应答：正常");
@@ -2495,18 +2537,23 @@ const JGCSZD_SLOPE_COL = 1;
 const JGCSZD_OFFSET_COL = 3;
 const JGCSZD_STATUS_COL = 5;
 
-function setJGCSZDStatus(message) {
+function setJGCSZDStatus(message: string): void {
   const statusEl = document.getElementById("textBrowser_JGCSZD");
   if (statusEl) statusEl.textContent = message;
 }
 
-function parseJGCSZDNumber(value) {
+function parseJGCSZDNumber(value: unknown): number | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (value && typeof value === "object") {
-    if ("result" in value) return parseJGCSZDNumber(value.result);
-    if ("text" in value) return parseJGCSZDNumber(value.text);
-    if (Array.isArray(value.richText)) {
-      return parseJGCSZDNumber(value.richText.map((item) => item.text ?? "").join(""));
+    const obj = value as Record<string, unknown>;
+    if ("result" in obj) return parseJGCSZDNumber(obj.result);
+    if ("text" in obj) return parseJGCSZDNumber(obj.text);
+    if (Array.isArray(obj.richText)) {
+      return parseJGCSZDNumber(
+        (obj.richText as Array<{ text?: unknown }>)
+          .map((item) => (typeof item.text === "string" ? item.text : ""))
+          .join(""),
+      );
     }
   }
   const text = String(value ?? "").trim();
@@ -2515,7 +2562,7 @@ function parseJGCSZDNumber(value) {
   return Number.isFinite(num) ? num : null;
 }
 
-function parseJGCSZDDelimitedRows(text) {
+function parseJGCSZDDelimitedRows(text: string): string[][] {
   return text
     .replace(/^\uFEFF/, "")
     .replace(/\r\n/g, "\n")
@@ -2524,8 +2571,8 @@ function parseJGCSZDDelimitedRows(text) {
     .map((line) => line.split(/[,\t]/));
 }
 
-function normalizeJGCSZDRows(rawRows) {
-  const rows = [];
+function normalizeJGCSZDRows(rawRows: unknown[][]): number[][] {
+  const rows: number[][] = [];
   for (const row of rawRows) {
     if (!row || row.length < 2) continue;
     const slope = parseJGCSZDNumber(row[0]);
@@ -2537,7 +2584,7 @@ function normalizeJGCSZDRows(rawRows) {
   return rows;
 }
 
-function chooseJGCSZDFile() {
+function chooseJGCSZDFile(): Promise<File | null> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
@@ -2555,14 +2602,31 @@ function chooseJGCSZDFile() {
   });
 }
 
-async function readJGCSZDWorkbookRows(file) {
+/** ExcelJS 页面全局对象的最小类型声明（通过 <script> 引入，无 @types） */
+interface ExcelJSWorksheetLocal {
+  eachRow: (cb: (row: { getCell: (n: number) => { value: unknown } }) => void) => void;
+}
+interface ExcelJSWorkbookLocal {
+  addWorksheet: (name: string) => {
+    columns: Array<{ width: number }>;
+    addRow: (row: number[]) => void;
+  };
+  xlsx: {
+    load: (data: ArrayBuffer) => Promise<void>;
+    writeBuffer: () => Promise<ArrayBuffer>;
+  };
+  worksheets: ExcelJSWorksheetLocal[];
+}
+type ExcelJSModuleLocal = { Workbook: new () => ExcelJSWorkbookLocal };
+
+async function readJGCSZDWorkbookRows(file: File): Promise<number[][]> {
   const ext = file.name.split(".").pop()?.toLowerCase();
   if (ext === "csv") {
     const text = await file.text();
     return normalizeJGCSZDRows(parseJGCSZDDelimitedRows(text));
   }
 
-  const Excel = globalThis.ExcelJS;
+  const Excel = (globalThis as { ExcelJS?: ExcelJSModuleLocal }).ExcelJS;
   if (!Excel) {
     throw new Error("ExcelJS 未加载，无法读取 Excel 文件");
   }
@@ -2572,14 +2636,14 @@ async function readJGCSZDWorkbookRows(file) {
   const ws = wb.worksheets[0];
   if (!ws) return [];
 
-  const rawRows = [];
+  const rawRows: unknown[][] = [];
   ws.eachRow((row) => {
     rawRows.push([row.getCell(1).value, row.getCell(2).value]);
   });
   return normalizeJGCSZDRows(rawRows);
 }
 
-async function loadJGCSZDExcelToTable() {
+async function loadJGCSZDExcelToTable(): Promise<void> {
   try {
     const file = await chooseJGCSZDFile();
     if (!file) return;
@@ -2591,17 +2655,18 @@ async function loadJGCSZDExcelToTable() {
     }
 
     for (let i = 0; i < rows.length; i++) {
-      Utils.setTableCellText(JGCSZD_TABLE_ID, i, JGCSZD_SLOPE_COL, rows[i][0]);
-      Utils.setTableCellText(JGCSZD_TABLE_ID, i, JGCSZD_OFFSET_COL, rows[i][1]);
+      Utils.setTableCellText(JGCSZD_TABLE_ID, i, JGCSZD_SLOPE_COL, String(rows[i][0]));
+      Utils.setTableCellText(JGCSZD_TABLE_ID, i, JGCSZD_OFFSET_COL, String(rows[i][1]));
     }
     setJGCSZDStatus(`已加载 ${rows.length} 行激光参数装订数据: ${file.name}`);
   } catch (err) {
+    const e = err as Error;
     console.error("[JGCSZD] 加载 Excel 失败:", err);
-    setJGCSZDStatus(`加载激光参数装订失败: ${err.message}`);
+    setJGCSZDStatus(`加载激光参数装订失败: ${e.message}`);
   }
 }
 
-function getJGCSZDTableRows() {
+function getJGCSZDTableRows(): number[][] {
   const rows = [];
   for (let i = 0; i < JGCSZD_PIXEL_COUNT; i++) {
     const slope = parseJGCSZDNumber(Utils.getTableCellText(JGCSZD_TABLE_ID, i, JGCSZD_SLOPE_COL));
@@ -2611,8 +2676,8 @@ function getJGCSZDTableRows() {
   return rows;
 }
 
-async function writeJGCSZDWorkbook(rows) {
-  const Excel = globalThis.ExcelJS;
+async function writeJGCSZDWorkbook(rows: number[][]): Promise<ArrayBuffer> {
+  const Excel = (globalThis as { ExcelJS?: ExcelJSModuleLocal }).ExcelJS;
   if (!Excel) {
     throw new Error("ExcelJS 未加载，无法保存 Excel 文件");
   }
@@ -2624,7 +2689,7 @@ async function writeJGCSZDWorkbook(rows) {
   return await wb.xlsx.writeBuffer();
 }
 
-async function saveJGCSZDTableToExcel() {
+async function saveJGCSZDTableToExcel(): Promise<void> {
   try {
     const rows = getJGCSZDTableRows();
     const buffer = await writeJGCSZDWorkbook(rows);
@@ -2633,9 +2698,10 @@ async function saveJGCSZDTableToExcel() {
     });
     const filename = "JGCSZD_Params.xlsx";
 
-    if (typeof window.showSaveFilePicker === "function") {
+    const win = window as unknown as WindowSaveFilePickerLocal;
+    if (typeof win.showSaveFilePicker === "function") {
       try {
-        const handle = await window.showSaveFilePicker({
+        const handle = await win.showSaveFilePicker({
           suggestedName: filename,
           types: [
             {
@@ -2650,7 +2716,8 @@ async function saveJGCSZDTableToExcel() {
         setJGCSZDStatus(`已保存 ${rows.length} 行激光参数装订数据`);
         return;
       } catch (err) {
-        if (err.name === "AbortError") return;
+        const e = err as { name?: string };
+        if (e.name === "AbortError") return;
         console.warn("[JGCSZD] showSaveFilePicker 失败，降级为下载:", err);
       }
     }
@@ -2668,8 +2735,9 @@ async function saveJGCSZDTableToExcel() {
     }, 1000);
     setJGCSZDStatus(`已导出 ${rows.length} 行激光参数装订数据`);
   } catch (err) {
+    const e = err as Error;
     console.error("[JGCSZD] 保存 Excel 失败:", err);
-    setJGCSZDStatus(`保存激光参数装订失败: ${err.message}`);
+    setJGCSZDStatus(`保存激光参数装订失败: ${e.message}`);
   }
 }
 
@@ -2757,7 +2825,7 @@ const loadCommand_JGCSZD = () => {
 /**
  * 激光参数装订应答5000H
  */
-export const handle_JGCSZD_Recv_0500H = (data) => {
+export const handle_JGCSZD_Recv_0500H = (data: Uint8Array): void => {
   console.log("[DataHandler] 激光参数装订应答");
   if (data[0] == 0x0f) {
     console.log("激光参数装订 正常");
@@ -2799,7 +2867,7 @@ const loadCommand_JGCSZDXC = () => {
 /**
  * 激光参数装订下传应答
  */
-export const handle_JGCSZDXC_Recv_0600H = (data) => {
+export const handle_JGCSZDXC_Recv_0600H = (data: Uint8Array): void => {
   console.log("[DataHandler] 激光参数装订下传应答");
   statusBar.receiveMessage("激光参数装订下传应答", "6000H");
 
@@ -2916,7 +2984,7 @@ const loadCommand_IRDetectParam = () => {
 /**
  * 红外检测参数装订应答0700H
  */
-export const handle_IRDetectParam_Recv_0700H = (data) => {
+export const handle_IRDetectParam_Recv_0700H = (data: Uint8Array): void => {
   console.log("[DataHandler] 红外检测参数装订应答");
   if (data[0] == 0x0f) {
     console.log("红外检测参数装订 正常");
@@ -2957,7 +3025,7 @@ const loadCommand_IRDetectParamRequest = () => {
 /**
  * 红外检测参数装订下传应答0800H
  */
-export const handle_IRDetectParamRequest_Recv_0800H = (data) => {
+export const handle_IRDetectParamRequest_Recv_0800H = (data: Uint8Array): void => {
   console.log("[DataHandler] 红外检测参数装订下传应答");
   statusBar.receiveMessage("红外检测参数装订下传应答", "0800H");
 
@@ -3035,33 +3103,38 @@ export const loadCommand_SJCJ = async () => {
   sendSJCJBuffer.set(sendBuffer.subarray(0, 16), 0);
 
   const helper = PacketManager.get("SJCJ_Send");
+  if (!helper) {
+    console.error("SJCJ_Send helper 未初始化");
+    return;
+  }
   helper.updateAllFromTable("tableWidget_SJCJ_Send");
 
   const payload = helper.getBufferForSend();
   sendSJCJBuffer.set(payload, 16);
 
   // --- 飞行指令 (ptr[18]) ---
-  const cb_FXZL = document.getElementById("checkBox_FXZL");
+  const cb_FXZL = document.getElementById("checkBox_FXZL") as HTMLInputElement | null;
   sendSJCJBuffer[18] = cb_FXZL?.checked ? 0xff : 0x00;
 
   // --- 跟踪工作模式 (ptr[19]) ---
   let g_GZMS = 0x00;
-  if (document.getElementById("radioButton_initial_state")?.checked)
+  if ((document.getElementById("radioButton_initial_state") as HTMLInputElement | null)?.checked)
     g_GZMS = 0x00;
-  if (document.getElementById("radioButton_GZYZ")?.checked) g_GZMS = 0x11;
-  if (document.getElementById("radioButton_HWYXJH")?.checked) g_GZMS = 0x21;
-  if (document.getElementById("radioButton_JGYXJH")?.checked) g_GZMS = 0x22;
-  if (document.getElementById("radioButton_HWYDJH")?.checked) g_GZMS = 0x23;
-  if (document.getElementById("radioButton_JGYDJH")?.checked) g_GZMS = 0x24;
-  if (document.getElementById("radioButton_FHJH")?.checked) g_GZMS = 0x25;
-  if (document.getElementById("radioButton_MBSS")?.checked) g_GZMS = 0x12;
+  if ((document.getElementById("radioButton_GZYZ") as HTMLInputElement | null)?.checked) g_GZMS = 0x11;
+  if ((document.getElementById("radioButton_HWYXJH") as HTMLInputElement | null)?.checked) g_GZMS = 0x21;
+  if ((document.getElementById("radioButton_JGYXJH") as HTMLInputElement | null)?.checked) g_GZMS = 0x22;
+  if ((document.getElementById("radioButton_HWYDJH") as HTMLInputElement | null)?.checked) g_GZMS = 0x23;
+  if ((document.getElementById("radioButton_JGYDJH") as HTMLInputElement | null)?.checked) g_GZMS = 0x24;
+  if ((document.getElementById("radioButton_FHJH") as HTMLInputElement | null)?.checked) g_GZMS = 0x25;
+  if ((document.getElementById("radioButton_MBSS") as HTMLInputElement | null)?.checked) g_GZMS = 0x12;
   sendSJCJBuffer[19] = g_GZMS;
 
   // --- 导引头抗干扰信息 (ptr[106], ptr[107]) ---
   let g_DYTKGRD = 0;
 
   // 辅助函数：获取下拉框索引
-  const getComboIndex = (id) => document.getElementById(id)?.selectedIndex ?? 0;
+  const getComboIndex = (id: string): number =>
+    (document.getElementById(id) as HTMLSelectElement | null)?.selectedIndex ?? 0;
 
   // bit 0-1
   let temp_dyt0 = getComboIndex("comboBox_DYTKGRD01");
@@ -3100,7 +3173,7 @@ export const loadCommand_SJCJ = async () => {
 
   // --- 积分时间控制 (ptr[110]) ---
   // C++: tempIndex + 1 = 110
-  if (document.getElementById("checkBox_JFSJKZD7")?.checked) {
+  if ((document.getElementById("checkBox_JFSJKZD7") as HTMLInputElement | null)?.checked) {
     const jfsjIndex = getComboIndex("comboBox_JFSJKZ");
     const jfsjMap = [0x81, 0x82, 0x84, 0x88, 0x90, 0xa0, 0xc0];
     sendSJCJBuffer[110] = jfsjMap[jfsjIndex] || 0x00;
@@ -3110,10 +3183,10 @@ export const loadCommand_SJCJ = async () => {
 
   // --- 激光位控 (ptr[116]) ---
   let g_JGWK = 0;
-  if (document.getElementById("radioButton_FSJSBKQ")?.checked) g_JGWK = 0x00;
-  if (document.getElementById("radioButton_JGFS")?.checked) g_JGWK = 0x11;
-  if (document.getElementById("radioButton_JGJS")?.checked) g_JGWK = 0x22;
-  if (document.getElementById("radioButton_FSJSZCKQ")?.checked) g_JGWK = 0x33;
+  if ((document.getElementById("radioButton_FSJSBKQ") as HTMLInputElement | null)?.checked) g_JGWK = 0x00;
+  if ((document.getElementById("radioButton_JGFS") as HTMLInputElement | null)?.checked) g_JGWK = 0x11;
+  if ((document.getElementById("radioButton_JGJS") as HTMLInputElement | null)?.checked) g_JGWK = 0x22;
+  if ((document.getElementById("radioButton_FSJSZCKQ") as HTMLInputElement | null)?.checked) g_JGWK = 0x33;
   sendSJCJBuffer[116] = g_JGWK;
 
   // --- 表格索引 43, 44 对应的数据 (ptr[111]..ptr[114]?) ---
@@ -3124,7 +3197,7 @@ export const loadCommand_SJCJ = async () => {
 
   // --- 激光制导/红外制导有效位 (ptr[117]) ---
   // C++: checkBox_YXYB
-  sendSJCJBuffer[117] = document.getElementById("checkBox_YXYB")?.checked
+  sendSJCJBuffer[117] = (document.getElementById("checkBox_YXYB") as HTMLInputElement | null)?.checked
     ? 0x11
     : 0x00;
 
@@ -3135,7 +3208,7 @@ export const loadCommand_SJCJ = async () => {
   while (isSJCJRunning) {
     wsClient.sendUdp(sendSJCJBuffer);
     //statusBar.sendMessage("正在进行数据采集...", "1000H");
-    await new Promise((resolve) => {
+    await new Promise<void>((resolve) => {
       resolveAck_SJCJ = resolve;
     });
   }
@@ -3161,11 +3234,15 @@ export const handle_SJCJ_Recv_010203H = () => {
  * 数据采集应答 1000H 处理函数
  * @param {Uint8Array} data -
  */
-export const handle_SJCJ_Recv_1000H = (data) => {
+export const handle_SJCJ_Recv_1000H = (data: Uint8Array): void => {
   // ==========================================
   // 1. 更新表格数据 tableWidget_SJCJ_SP
   // ==========================================
   const helper = PacketManager.get("SJCJ_Recv");
+  if (!helper) {
+    console.error("SJCJ_Recv helper 未初始化");
+    return;
+  }
 
   helper.loadBufferFromNet(data);
   helper.updateAllToTable("tableWidget_SJCJ_SP");
@@ -3173,7 +3250,7 @@ export const handle_SJCJ_Recv_1000H = (data) => {
   // ==========================================
   // 2. 更新跟踪模式显示 (tableWidget_SJCJ_SP item(2,1) 和 item(3,1))
   // ==========================================
-  const trackModeMap = {
+  const trackModeMap: Record<number, string> = {
     0x00: "00H 红外单模跟踪",
     0x11: "11H 激光单模跟踪",
     0x22: "22H 红外电视复合跟踪",
@@ -3185,7 +3262,7 @@ export const handle_SJCJ_Recv_1000H = (data) => {
   Utils.setTableCellText("tableWidget_SJCJ_SP", 2, 1, trackMode);
 
   // 跟踪信息来源
-  const sourceMap = {
+  const sourceMap: Record<number, string> = {
     0x00: "00H 关",
     0x11: "11H 红外",
     0x22: "22JG电视",
@@ -3202,8 +3279,8 @@ export const handle_SJCJ_Recv_1000H = (data) => {
   const temp_HWYD = data[65]; // 第65字节为红外应答
 
   const hwydHelper = PacketManager.get("HWYDZT_Recv");
-  Utils.setTableCellText("tableWidget_HWYD", 1, 1, temp_HWYD & 1 ? 1 : 0);
-  Utils.setTableCellText("tableWidget_HWYD", 2, 1, temp_HWYD & 2 ? 1 : 0);
+  Utils.setTableCellText("tableWidget_HWYD", 1, 1, String(temp_HWYD & 1 ? 1 : 0));
+  Utils.setTableCellText("tableWidget_HWYD", 2, 1, String(temp_HWYD & 2 ? 1 : 0));
   /*Utils.setTableCellText(
     "tableWidget_HWYD",
     3,
@@ -3211,7 +3288,7 @@ export const handle_SJCJ_Recv_1000H = (data) => {
     temp_HWYD & 4 ? "红外初始状态好" : "红外初始状态不好",
   );*/
 
-  Utils.setTableCellText("tableWidget_HWYD", 4, 1, temp_HWYD & 8 ? 1 : 0);
+  Utils.setTableCellText("tableWidget_HWYD", 4, 1, String(temp_HWYD & 8 ? 1 : 0));
   /*Utils.setTableCellText(
     "tableWidget_HWYD",
     5,
@@ -3224,7 +3301,7 @@ export const handle_SJCJ_Recv_1000H = (data) => {
     1,
     temp_HWYD & 32 ? "红外跟踪好" : "红外跟踪不好",
   );*/
-  Utils.setTableCellText("tableWidget_HWYD", 7, 1, temp_HWYD & 64 ? 1 : 0);
+  Utils.setTableCellText("tableWidget_HWYD", 7, 1, String(temp_HWYD & 64 ? 1 : 0));
   /*Utils.setTableCellText(
     "tableWidget_HWYD",
     8,
@@ -3247,23 +3324,23 @@ export const handle_SJCJ_Recv_1000H = (data) => {
     temp_HWYD2 & 1 ? "红外丢失目标" : "红外未丢失目标",
   );*/
   setLEDStatus("label_led_HWDSMB", (temp_HWYD2 & 1) !== 0);
-  Utils.setTableCellText("tableWidget_HWYD", 10, 1, temp_HWYD2 & 2 ? 1 : 0);
-  Utils.setTableCellText("tableWidget_HWYD", 11, 1, temp_HWYD2 & 4 ? 1 : 0);
+  Utils.setTableCellText("tableWidget_HWYD", 10, 1, String(temp_HWYD2 & 2 ? 1 : 0));
+  Utils.setTableCellText("tableWidget_HWYD", 11, 1, String(temp_HWYD2 & 4 ? 1 : 0));
   // ==========================================
   // 4. 更新激光工作状态 (表格 m_Table_JGGZ_Recv)
   // ==========================================
   const temp_JGGZ = data[87]; // 第87字节为激光工作状态
 
   const jggzHelper = PacketManager.get("JGGZZT_Recv");
-  Utils.setTableCellText("tableWidget_JGGZZT", 1, 1, temp_JGGZ & 1 ? 1 : 0);
-  Utils.setTableCellText("tableWidget_JGGZZT", 2, 1, temp_JGGZ & 2 ? 1 : 0);
+  Utils.setTableCellText("tableWidget_JGGZZT", 1, 1, String(temp_JGGZ & 1 ? 1 : 0));
+  Utils.setTableCellText("tableWidget_JGGZZT", 2, 1, String(temp_JGGZ & 2 ? 1 : 0));
   /*Utils.setTableCellText(
     "tableWidget_JGGZZT",
     3,
     1,
     temp_JGGZ & 4 ? "     初始状态好" : "     初始状态不好",
   );*/
-  Utils.setTableCellText("tableWidget_JGGZZT", 4, 1, temp_JGGZ & 8 ? 1 : 0);
+  Utils.setTableCellText("tableWidget_JGGZZT", 4, 1, String(temp_JGGZ & 8 ? 1 : 0));
   /*Utils.setTableCellText(
     "tableWidget_JGGZZT",
     5,
@@ -3276,7 +3353,7 @@ export const handle_SJCJ_Recv_1000H = (data) => {
     1,
     temp_JGGZ & 32 ? "     激光跟踪好" : "     跟踪不好",
   );*/
-  Utils.setTableCellText("tableWidget_JGGZZT", 7, 1, temp_JGGZ & 64 ? 1 : 0);
+  Utils.setTableCellText("tableWidget_JGGZZT", 7, 1, String(temp_JGGZ & 64 ? 1 : 0));
   /*Utils.setTableCellText(
     "tableWidget_JGGZZT",
     8,
@@ -3299,13 +3376,13 @@ export const handle_SJCJ_Recv_1000H = (data) => {
     temp_JGGZ2 & 1 ? "     激光丢失目标" : "     激光未丢失目标",
   );*/
   setLEDStatus("label_led_JGDSMB", (temp_JGGZ2 & 1) !== 0);
-  Utils.setTableCellText("tableWidget_JGGZZT", 10, 1, temp_JGGZ2 & 2 ? 1 : 0);
-  Utils.setTableCellText("tableWidget_JGGZZT", 11, 1, temp_JGGZ2 & 4 ? 1 : 0);
-  Utils.setTableCellText("tableWidget_JGGZZT", 12, 1, temp_JGGZ2 & 8 ? 1 : 0);
-  Utils.setTableCellText("tableWidget_JGGZZT", 13, 1, temp_JGGZ2 & 16 ? 1 : 0);
-  Utils.setTableCellText("tableWidget_JGGZZT", 14, 1, temp_JGGZ2 & 32 ? 1 : 0);
-  Utils.setTableCellText("tableWidget_JGGZZT", 15, 1, temp_JGGZ2 & 64 ? 1 : 0);
-  Utils.setTableCellText("tableWidget_JGGZZT", 15, 1, temp_JGGZ2 & 128 ? 1 : 0);
+  Utils.setTableCellText("tableWidget_JGGZZT", 10, 1, String(temp_JGGZ2 & 2 ? 1 : 0));
+  Utils.setTableCellText("tableWidget_JGGZZT", 11, 1, String(temp_JGGZ2 & 4 ? 1 : 0));
+  Utils.setTableCellText("tableWidget_JGGZZT", 12, 1, String(temp_JGGZ2 & 8 ? 1 : 0));
+  Utils.setTableCellText("tableWidget_JGGZZT", 13, 1, String(temp_JGGZ2 & 16 ? 1 : 0));
+  Utils.setTableCellText("tableWidget_JGGZZT", 14, 1, String(temp_JGGZ2 & 32 ? 1 : 0));
+  Utils.setTableCellText("tableWidget_JGGZZT", 15, 1, String(temp_JGGZ2 & 64 ? 1 : 0));
+  Utils.setTableCellText("tableWidget_JGGZZT", 15, 1, String(temp_JGGZ2 & 128 ? 1 : 0));
 
   // ==========================================
   // 5. 更新稳定/框架状态 (第86字节)
@@ -3380,16 +3457,16 @@ const updateChart_SJCJ = () => {
 
   // 更新每条曲线
   for (const curve of curves) {
-    let value = 0;
+    let value: number = 0;
     if (curve.paramName) {
-      value = helper.getValue(curve.paramName) || 0;
+      value = Number(helper.getValue(Number(curve.paramName))) || 0;
     }
 
     // 添加数据点到图表
     addChartDataPoint(curve.name, chartFrameCounter, value, maxPoints);
 
     // 根据checkbox显示/隐藏曲线
-    const isVisible = document.getElementById(curve.checkBox)?.checked ?? false;
+    const isVisible = (document.getElementById(curve.checkBox) as HTMLInputElement | null)?.checked ?? false;
     setCurveVisible(curve.name, isVisible);
   }
 
@@ -3404,7 +3481,7 @@ const updateChart_SJCJ = () => {
  * 更新目标框位置（绿框）
  * @param {Uint8Array} recvData - 接收数据
  */
-const updateTargetBox = (recvData) => {
+const updateTargetBox = (recvData: Uint8Array): void => {
   // 目标方位角和俯仰角
   const view = new DataView(
     recvData.buffer,
@@ -3422,8 +3499,8 @@ const updateTargetBox = (recvData) => {
   const HWFW = -2; // 红外方位
   const HWFY = 2; // 红外俯仰
 
-  const HWFWSCJZ1 = parseFloat(HWFW) || 0;
-  const HWFYSCJZ1 = parseFloat(HWFY) || 0;
+  const HWFWSCJZ1 = parseFloat(String(HWFW)) || 0;
+  const HWFYSCJZ1 = parseFloat(String(HWFY)) || 0;
 
   // 计算目标框位置（C++ 代码逻辑）
   // temp2 = 64 - (GZXMBFWJ / (HWFWSCJZ1 + 0.000001)) * 128;
@@ -3451,7 +3528,7 @@ const updateTargetBox = (recvData) => {
  * 开始保存命令帧
  * 前端只负责发送“开始录制”的信号给后端
  */
-const startSavingCMD = () => {
+const startSavingCMD = (): void => {
   console.log(" 发送指令：请求后端开始保存文件...");
 
   // 通过 WebSocket 发送控制指令
@@ -3470,9 +3547,9 @@ const startSavingCMD = () => {
 
 const SJCJ_F000H_SAVE_SPECIAL_FIELDS = new Set([24, 25]);
 
-const getSJCJF000HSaveFieldNames = () => {
+const getSJCJF000HSaveFieldNames = (): string[] => {
   const helper = PacketManager.get("SJCJ_F000H_Send");
-  const table = document.getElementById("tableWidget_SJCJ_F000H_Send");
+  const table = document.getElementById("tableWidget_SJCJ_F000H_Send") as HTMLTableElement | null;
   if (!helper) return ["时间"];
 
   const fieldNames = ["时间"];
@@ -3501,10 +3578,10 @@ const getSJCJF000HSaveFieldNames = () => {
 };
 
 const getSJCJF000HSaveRowValues = (
-  helper,
-  targetStatusWord,
-  compositeCommandWord,
-) => {
+  helper: BinaryTableHelper,
+  targetStatusWord: number,
+  compositeCommandWord: number,
+): string[] => {
   const rowValues = [new Date().toISOString()];
   const sortedKeys = Array.from(helper.metaData.keys()).sort((a, b) => a - b);
   for (const key of sortedKeys) {
@@ -3512,11 +3589,11 @@ const getSJCJF000HSaveRowValues = (
     if (!item) continue;
 
     if (key === 24) {
-      rowValues.push(targetStatusWord);
+      rowValues.push(String(targetStatusWord));
       continue;
     }
     if (key === 25) {
-      rowValues.push(compositeCommandWord);
+      rowValues.push(String(compositeCommandWord));
       continue;
     }
     if (item.type === "RES" || item.type === "NOTUSE") {
@@ -3531,10 +3608,10 @@ const getSJCJF000HSaveRowValues = (
 /**
  * 开始保存B帧
  */
-const startSavingBFrame = () => {
+const startSavingBFrame = (): void => {
   console.log("发送指令：请求后端开始保存B帧文件...");
   // 从 DOM 表格第一列读取字段名作为 CSV 表头
-  const tableB = document.getElementById("tableWidget_SJCJ_F000H_Recv");
+  const tableB = document.getElementById("tableWidget_SJCJ_F000H_Recv") as HTMLTableElement | null;
   let fieldNamesB = ["时间"];
   const fieldNamesA = getSJCJF000HSaveFieldNames();
   if (tableB) {
@@ -3553,7 +3630,7 @@ const startSavingBFrame = () => {
     }
   }
   // 追加红外应答状态表格列名
-  const irTable = document.getElementById("tableWidget_HWYDZT_F000H_Recv");
+  const irTable = document.getElementById("tableWidget_HWYDZT_F000H_Recv") as HTMLTableElement | null;
   if (irTable) {
     for (let i = 0; i < irTable.rows.length; i++) {
       const row = irTable.rows[i];
@@ -3563,7 +3640,7 @@ const startSavingBFrame = () => {
     }
   }
   // 追加激光工作状态表格列名
-  const laserTable = document.getElementById("tableWidget_JGGZZT_F000H_Recv");
+  const laserTable = document.getElementById("tableWidget_JGGZZT_F000H_Recv") as HTMLTableElement | null;
   if (laserTable) {
     for (let i = 0; i < laserTable.rows.length; i++) {
       const row = laserTable.rows[i];
@@ -3585,7 +3662,7 @@ const startSavingBFrame = () => {
 /**
  * 停止保存命令帧
  */
-const stopSavingCMD = () => {
+const stopSavingCMD = (): void => {
   console.log("发送指令：请求后端停止保存...");
 
   const cmd = JSON.stringify({
@@ -3604,7 +3681,7 @@ const stopSavingCMD = () => {
 
 // 解析二进制字符串选项
 // 输入格式如 "000b未知"、"1b控制"、"00b发射接收均不开启"
-const parseBinaryOption = (str) => {
+const parseBinaryOption = (str: string): number => {
   const match = str.match(/^([01]+)b/);
   if (match) {
     return parseInt(match[1], 2);
@@ -3637,7 +3714,6 @@ export const loadCommand_SJCJ_F000H = async () => {
       statusBar.sendMessage(
         "SJCJ_F000H_Send helper 未初始化",
         "F000H",
-        "error",
       );
       return;
     }
@@ -3661,43 +3737,43 @@ export const loadCommand_SJCJ_F000H = async () => {
     // 位 11: 前向/后向 (1位)
     let targetStatusWord = 0;
 
-    const djlxl = document.getElementById("comboBox_DJMBLX");
+    const djlxl = document.getElementById("comboBox_DJMBLX") as HTMLSelectElement | null;
     if (djlxl) {
       const val = parseBinaryOption(djlxl.value);
       targetStatusWord |= (val & 0x7) << 0; // 位 0-2
     }
 
-    const hwqj = document.getElementById("comboBox_HWQJBS");
+    const hwqj = document.getElementById("comboBox_HWQJBS") as HTMLSelectElement | null;
     if (hwqj) {
       const val = parseBinaryOption(hwqj.value);
       targetStatusWord |= (val & 0x7) << 3; // 位 3-5
     }
 
-    const qf1 = document.getElementById("comboBox_QF1BS");
+    const qf1 = document.getElementById("comboBox_QF1BS") as HTMLInputElement | null;
     if (qf1) {
       const val = qf1.checked ? 1 : 0;
       targetStatusWord |= (val & 0x1) << 6; // 位 6
     }
 
-    const qf2 = document.getElementById("comboBox_QF2BS");
+    const qf2 = document.getElementById("comboBox_QF2BS") as HTMLInputElement | null;
     if (qf2) {
       const val = qf2.checked ? 1 : 0;
       targetStatusWord |= (val & 0x1) << 7; // 位 7
     }
 
-    const ych = document.getElementById("comboBox_YCHBS");
+    const ych = document.getElementById("comboBox_YCHBS") as HTMLInputElement | null;
     if (ych) {
       const val = ych.checked ? 1 : 0;
       targetStatusWord |= (val & 0x1) << 8; // 位 8
     }
 
-    const mbcc = document.getElementById("comboBox_MBCCBS");
+    const mbcc = document.getElementById("comboBox_MBCCBS") as HTMLSelectElement | null;
     if (mbcc) {
       const val = parseBinaryOption(mbcc.value);
       targetStatusWord |= (val & 0x3) << 9; // 位 9-10
     }
 
-    const qfhf = document.getElementById("comboBox_QFHF");
+    const qfhf = document.getElementById("comboBox_QFHF") as HTMLInputElement | null;
     if (qfhf) {
       const val = qfhf.checked ? 1 : 0;
       targetStatusWord |= (val & 0x1) << 11; // 位 11
@@ -3721,67 +3797,67 @@ export const loadCommand_SJCJ_F000H = async () => {
     // 位 12: 分离脱落信号 (1位)
     let compositeCommandWord = 0;
 
-    const xmzl = document.getElementById("comboBox_XMZL");
+    const xmzl = document.getElementById("comboBox_XMZL") as HTMLInputElement | null;
     if (xmzl) {
       const val = xmzl.checked ? 1 : 0;
       compositeCommandWord |= (val & 0x1) << 0; // 位 0
     }
 
-    const hxzl = document.getElementById("comboBox_HXZL");
+    const hxzl = document.getElementById("comboBox_HXZL") as HTMLInputElement | null;
     if (hxzl) {
       const val = hxzl.checked ? 1 : 0;
       compositeCommandWord |= (val & 0x1) << 1; // 位 1
     }
 
-    const ldxx = document.getElementById("comboBox_LDXXYX");
+    const ldxx = document.getElementById("comboBox_LDXXYX") as HTMLInputElement | null;
     if (ldxx) {
       const val = ldxx.checked ? 1 : 0;
       compositeCommandWord |= (val & 0x1) << 2; // 位 2
     }
 
-    const hwjh = document.getElementById("comboBox_HWJHKZ");
+    const hwjh = document.getElementById("comboBox_HWJHKZ") as HTMLInputElement | null;
     if (hwjh) {
       const val = hwjh.checked ? 1 : 0;
       compositeCommandWord |= (val & 0x1) << 3; // 位 3
     }
 
-    const jgfs = document.getElementById("comboBox_JGFSJKZ");
+    const jgfs = document.getElementById("comboBox_JGFSJKZ") as HTMLSelectElement | null;
     if (jgfs) {
       const val = parseBinaryOption(jgfs.value);
       compositeCommandWord |= (val & 0x3) << 4; // 位 4-5
     }
 
-    const sszl = document.getElementById("comboBox_SSZL");
+    const sszl = document.getElementById("comboBox_SSZL") as HTMLSelectElement | null;
     if (sszl) {
       const val = parseBinaryOption(sszl.value);
       compositeCommandWord |= (val & 0x7) << 6; // 位 6-8
     }
 
-    const yzcs = document.getElementById("comboBox_YZCSZL");
+    const yzcs = document.getElementById("comboBox_YZCSZL") as HTMLInputElement | null;
     if (yzcs) {
       const val = yzcs.checked ? 1 : 0;
       compositeCommandWord |= (val & 0x1) << 9; // 位 9
     }
 
-    const ycyx = document.getElementById("comboBox_YCYXZL");
+    const ycyx = document.getElementById("comboBox_YCYXZL") as HTMLInputElement | null;
     if (ycyx) {
       const val = ycyx.checked ? 1 : 0;
       compositeCommandWord |= (val & 0x1) << 10; // 位 10
     }
 
-    const yxsc = document.getElementById("comboBox_YXSCYBXHZL");
+    const yxsc = document.getElementById("comboBox_YXSCYBXHZL") as HTMLInputElement | null;
     if (yxsc) {
       const val = yxsc.checked ? 1 : 0;
       compositeCommandWord |= (val & 0x1) << 11; // 位 11
     }
 
-    const fltl = document.getElementById("comboBox_FLTLXH");
+    const fltl = document.getElementById("comboBox_FLTLXH") as HTMLInputElement | null;
     if (fltl) {
       const val = fltl.checked ? 1 : 0;
       compositeCommandWord |= (val & 0x1) << 12; // 位 12
     }
 
-    const zhxh = document.getElementById("comboBox_ZHXH");
+    const zhxh = document.getElementById("comboBox_ZHXH") as HTMLInputElement | null;
     if (zhxh) {
       const val = zhxh.checked ? 1 : 0;
       compositeCommandWord |= (val & 0x1) << 13; // 位 13
@@ -3853,14 +3929,16 @@ export const loadCommand_SJCJ_F000H = async () => {
         if (isSavingBFrame) {
           // 从实际发送的字节缓冲区解析字段值，确保与发出去的数据一致
           const helperA = PacketManager.get("SJCJ_F000H_Send");
-          const payloadA = f000hLocalBuffer.slice(16); // 去掉16字节包头
-          helperA.loadBufferFromNet(payloadA);
-          const rowValuesA = getSJCJF000HSaveRowValues(
-            helperA,
-            targetStatusWord,
-            compositeCommandWord,
-          );
-          wsClient.sendText(JSON.stringify({ type: "SAVE_A_FRAME_ROW", row: rowValuesA.join(",") }));
+          if (helperA) {
+            const payloadA = f000hLocalBuffer.slice(16); // 去掉16字节包头
+            helperA.loadBufferFromNet(payloadA);
+            const rowValuesA = getSJCJF000HSaveRowValues(
+              helperA,
+              targetStatusWord,
+              compositeCommandWord,
+            );
+            wsClient.sendText(JSON.stringify({ type: "SAVE_A_FRAME_ROW", row: rowValuesA.join(",") }));
+          }
         }
 
         /*await new Promise((resolve) => {
@@ -3912,7 +3990,7 @@ export const loadCommand_SJCJ_F000H = async () => {
         }
     };*/
 
-export const handle_SJCJ_Recv_F000H = (data) => {
+export const handle_SJCJ_Recv_F000H = (data: Uint8Array): void => {
   //console.log("[F000H] 数据采集命令应答");
   {
     const _now = Date.now();
@@ -3928,6 +4006,10 @@ export const handle_SJCJ_Recv_F000H = (data) => {
   );*/
 
   const helper = PacketManager.get("SJCJ_F000H_Recv");
+  if (!helper) {
+    console.error("SJCJ_F000H_Recv helper 未初始化");
+    return;
+  }
 
   helper.loadBufferFromNet(data);
   helper.updateAllToTable("tableWidget_SJCJ_F000H_Recv");
@@ -3939,7 +4021,7 @@ export const handle_SJCJ_Recv_F000H = (data) => {
   if (isSavingBFrame) {
     if (saveBFrameCount < MAX_SAVE_FRAMES) {
       const nowStr = new Date().toISOString();
-      const saveTable = document.getElementById("tableWidget_SJCJ_F000H_Recv");
+      const saveTable = document.getElementById("tableWidget_SJCJ_F000H_Recv") as HTMLTableElement | null;
       let rowValues = [nowStr];
       if (saveTable) {
         // 先写完左列值，再写右列值
@@ -3947,7 +4029,7 @@ export const handle_SJCJ_Recv_F000H = (data) => {
           const tr = saveTable.rows[i];
           if (tr.cells.length > 1) {
             const cell = tr.cells[1];
-            const input = cell.querySelector("input, select");
+            const input = cell.querySelector("input, select") as HTMLInputElement | HTMLSelectElement | null;
             rowValues.push(
               input ? input.value.trim() : cell.textContent.trim(),
             );
@@ -3957,7 +4039,7 @@ export const handle_SJCJ_Recv_F000H = (data) => {
           const tr = saveTable.rows[i];
           if (tr.cells.length > 3) {
             const cell = tr.cells[3];
-            const input = cell.querySelector("input, select");
+            const input = cell.querySelector("input, select") as HTMLInputElement | HTMLSelectElement | null;
             rowValues.push(
               input ? input.value.trim() : cell.textContent.trim(),
             );
@@ -3965,25 +4047,25 @@ export const handle_SJCJ_Recv_F000H = (data) => {
         }
       }
       // 追加红外应答状态表格数据（tableWidget_HWYDZT_F000H_Recv 第二列）
-      const irTable = document.getElementById("tableWidget_HWYDZT_F000H_Recv");
+      const irTable = document.getElementById("tableWidget_HWYDZT_F000H_Recv") as HTMLTableElement | null;
       if (irTable) {
         for (let i = 0; i < irTable.rows.length; i++) {
           const row = irTable.rows[i];
           if (row.cells.length > 1) {
             const cell = row.cells[1];
-            const input = cell.querySelector("input");
+            const input = cell.querySelector("input") as HTMLInputElement | null;
             rowValues.push(input ? input.value.trim() : cell.textContent.trim());
           }
         }
       }
       // 追加激光工作状态表格数据（tableWidget_JGGZZT_F000H_Recv 第二列）
-      const laserTable = document.getElementById("tableWidget_JGGZZT_F000H_Recv");
+      const laserTable = document.getElementById("tableWidget_JGGZZT_F000H_Recv") as HTMLTableElement | null;
       if (laserTable) {
         for (let i = 0; i < laserTable.rows.length; i++) {
           const row = laserTable.rows[i];
           if (row.cells.length > 1) {
             const cell = row.cells[1];
-            const input = cell.querySelector("input");
+            const input = cell.querySelector("input") as HTMLInputElement | null;
             rowValues.push(input ? input.value.trim() : cell.textContent.trim());
           }
         }
@@ -4028,7 +4110,7 @@ export const handle_SJCJ_Recv_F000H = (data) => {
  * 更新红外应答状态和激光工作状态表格
  * @param {BinaryTableHelper} helper - F000H接收helper
  */
-const updateStatusTables_F000H = (helper) => {
+const updateStatusTables_F000H = (helper: BinaryTableHelper): void => {
   // 读取红外应答状态字（索引6）
   const irResponseStatus = helper.getValue(6);
   const irStatusValue = parseInt(irResponseStatus) || 0;
@@ -4037,7 +4119,7 @@ const updateStatusTables_F000H = (helper) => {
   const irBitOffsets = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13];
 
   // 更新红外应答状态表格
-  const irTable = document.getElementById("tableWidget_HWYDZT_F000H_Recv");
+  const irTable = document.getElementById("tableWidget_HWYDZT_F000H_Recv") as HTMLTableElement | null;
   if (irTable) {
     for (let i = 0; i < irBitOffsets.length; i++) {
       const startBit = irBitOffsets[i];
@@ -4048,7 +4130,7 @@ const updateStatusTables_F000H = (helper) => {
       const row = irTable.rows[i];
       if (row && row.cells[1]) {
         const cell = row.cells[1];
-        const input = cell.querySelector("input");
+        const input = cell.querySelector("input") as HTMLInputElement | null;
         if (input) {
           input.value = bitValue.toString();
         } else {
@@ -4066,7 +4148,7 @@ const updateStatusTables_F000H = (helper) => {
   const laserBitOffsets = [0, 1,2, 3, 4, 5, 6, 7, 8];
 
   // 更新激光工作状态表格
-  const laserTable = document.getElementById("tableWidget_JGGZZT_F000H_Recv");
+  const laserTable = document.getElementById("tableWidget_JGGZZT_F000H_Recv") as HTMLTableElement | null;
   if (laserTable) {
     for (let i = 0; i < laserBitOffsets.length; i++) {
       const startBit = laserBitOffsets[i];
@@ -4078,7 +4160,7 @@ const updateStatusTables_F000H = (helper) => {
       const row = laserTable.rows[i];
       if (row && row.cells[1]) {
         const cell = row.cells[1];
-        const input = cell.querySelector("input");
+        const input = cell.querySelector("input") as HTMLInputElement | null;
         if (input) {
           input.value = bitValue.toString();
         } else {
@@ -4097,7 +4179,7 @@ const updateStatusTables_F000H = (helper) => {
  * 更新目标框位置F000H（绿框）
  * @param {Uint8Array} recvData - 接收数据
  */
-const updateTargetBox_F000h = (recvData) => {
+const updateTargetBox_F000h = (recvData: Uint8Array): void => {
   // 目标方位角和俯仰角
   const view = new DataView(
     recvData.buffer,
@@ -4124,8 +4206,8 @@ const updateTargetBox_F000h = (recvData) => {
   const HWFW = -2; // 红外方位
   const HWFY = -2; // 红外俯仰
 
-  const HWFWSCJZ1 = parseFloat(HWFW) || 0;
-  const HWFYSCJZ1 = parseFloat(HWFY) || 0;
+  const HWFWSCJZ1 = parseFloat(String(HWFW)) || 0;
+  const HWFYSCJZ1 = parseFloat(String(HWFY)) || 0;
 
   // temp2 = 64 - (GZXMBFWJ / (HWFWSCJZ1 + 0.000001)) * 128;
   // temp2 = temp2 * 3;
@@ -4144,9 +4226,9 @@ const updateTargetBox_F000h = (recvData) => {
   setVideoTargetBoxPosition(y, x);
 };
 
-function updateCSZD3000HBlindZoneForSend(helper) {
-  const blindZoneInput = document.getElementById("input_JGMQ_3000H");
-  const blindZoneUiValue = parseFloat(blindZoneInput?.value);
+function updateCSZD3000HBlindZoneForSend(helper: BinaryTableHelper): void {
+  const blindZoneInput = document.getElementById("input_JGMQ_3000H") as HTMLInputElement | null;
+  const blindZoneUiValue = parseFloat(blindZoneInput?.value ?? "");
   const safeBlindZone = Number.isFinite(blindZoneUiValue)
     ? blindZoneUiValue
     : 80;
@@ -4165,12 +4247,12 @@ function updateCSZD3000HBlindZoneForSend(helper) {
   }
 }
 
-function renderCSZD3000HRecvBlindZone() {
+function renderCSZD3000HRecvBlindZone(): void {
   const valueCell = Array.from(
     document.querySelectorAll('[data-cszd-direction="recv"][data-cszd-field]'),
   ).find(
-    (control) => control.dataset.cszdField === CSZD3000H_FIELDS.laserBlindZone,
-  );
+    (el): el is HTMLElement => (el as HTMLElement).dataset.cszdField === CSZD3000H_FIELDS.laserBlindZone,
+  ) as HTMLElement | undefined;
   if (!valueCell) {
     console.warn(
       `[CSZD3000H] 接收界面未找到字段：${CSZD3000H_FIELDS.laserBlindZone}`,
@@ -4195,19 +4277,19 @@ function renderCSZD3000HRecvBlindZone() {
   );
 }
 
-function getCSZD3000HFlagFromCheckboxes(checkboxIds) {
-  return checkboxIds.reduce((value, checkboxId, bit) => {
-    return document.getElementById(checkboxId)?.checked
+function getCSZD3000HFlagFromCheckboxes(checkboxIds: string[]): number {
+  return checkboxIds.reduce((value: number, checkboxId: string, bit: number) => {
+    return (document.getElementById(checkboxId) as HTMLInputElement | null)?.checked
       ? value | (1 << bit)
       : value;
   }, 0);
 }
 
-function updateCSZD3000HFlagTableCell(fieldName, value) {
+function updateCSZD3000HFlagTableCell(fieldName: string, value: number): void {
   // 有效标志不再作为可编辑字段显示；这里保留函数名，便于维持调用链。
 }
 
-function updateCSZD3000HValidFlagsForSend(helper) {
+function updateCSZD3000HValidFlagsForSend(helper: BinaryTableHelper): void {
   const flag0 = getCSZD3000HFlagFromCheckboxes(
     CSZD3000H_VALID_FLAG0_CHECKBOXES,
   );
@@ -4215,10 +4297,11 @@ function updateCSZD3000HValidFlagsForSend(helper) {
     CSZD3000H_VALID_FLAG1_CHECKBOXES,
   );
 
-  for (const [fieldName, value] of [
+  const flagEntries: Array<[string, number]> = [
     [CSZD3000H_FIELDS.validFlag0, flag0],
     [CSZD3000H_FIELDS.validFlag1, flag1],
-  ]) {
+  ];
+  for (const [fieldName, value] of flagEntries) {
     if (!helper.setValueByName(fieldName, value)) {
       console.warn(`[CSZD3000H] 无法写入字段：${fieldName}`);
     }
@@ -4226,14 +4309,14 @@ function updateCSZD3000HValidFlagsForSend(helper) {
   }
 }
 
-function updateCSZD3000HCheckboxesFromValue(checkboxIds, value) {
-  checkboxIds.forEach((checkboxId, bit) => {
-    const checkbox = document.getElementById(checkboxId);
+function updateCSZD3000HCheckboxesFromValue(checkboxIds: string[], value: number): void {
+  checkboxIds.forEach((checkboxId: string, bit: number) => {
+    const checkbox = document.getElementById(checkboxId) as HTMLInputElement | null;
     if (checkbox) checkbox.checked = (value & (1 << bit)) !== 0;
   });
 }
 
-function updateCSZD3000HValidFlagsFromRecv(helper) {
+function updateCSZD3000HValidFlagsFromRecv(helper: BinaryTableHelper): void {
   const flag0 =
     Number(helper.getValueByName(CSZD3000H_FIELDS.validFlag0)) || 0;
   const flag1 =
@@ -4251,17 +4334,17 @@ function updateCSZD3000HValidFlagsFromRecv(helper) {
   });
 }
 
-function updateCSZD3000HModesForSend(helper) {
+function updateCSZD3000HModesForSend(helper: BinaryTableHelper): void {
   const aimingPointMode =
-    Number(document.getElementById("comboBox_MZDXZMS_3000H")?.value) || 0;
+    Number((document.getElementById("comboBox_MZDXZMS_3000H") as HTMLSelectElement | null)?.value) || 0;
   const trackingEntryMode =
-    Number(document.getElementById("comboBox_GZZRMS_3000H")?.value) || 0;
+    Number((document.getElementById("comboBox_GZZRMS_3000H") as HTMLSelectElement | null)?.value) || 0;
 
   helper.setValueByName(CSZD3000H_FIELDS.aimingPointMode, aimingPointMode);
   helper.setValueByName(CSZD3000H_FIELDS.trackingEntryMode, trackingEntryMode);
 }
 
-function updateCSZD3000HModesFromRecv(helper) {
+function updateCSZD3000HModesFromRecv(helper: BinaryTableHelper): void {
   const aimingPointMode = Number(
     helper.getValueByName(CSZD3000H_FIELDS.aimingPointMode),
   );
@@ -4270,10 +4353,10 @@ function updateCSZD3000HModesFromRecv(helper) {
   );
   const aimingPointSelect = document.getElementById(
     "comboBox_MZDXZMS_3000H",
-  );
+  ) as HTMLSelectElement | null;
   const trackingEntrySelect = document.getElementById(
     "comboBox_GZZRMS_3000H",
-  );
+  ) as HTMLSelectElement | null;
 
   if (aimingPointSelect) {
     aimingPointSelect.value = aimingPointMode === 1 ? "1" : "0";
@@ -4310,14 +4393,14 @@ const loadCommand_CSZD_3000H = () => {
   syncCSZD3000HFormToHelpers(helper_1, helper_2);
   updateCSZD3000HBlindZoneForSend(helper_1);
 
-  const LaserAmplifierGainMap = {
+  const LaserAmplifierGainMap: Record<string, number> = {
     "0:1倍": 0,
     "1:0.8倍": 1,
     "2:0.6倍": 2,
     "3:0.4倍": 3,
   };
   const LaserAmplifierGain =
-    document.getElementById("comboBox_JGFDQZY_3000H")?.value || "0:1倍";
+    (document.getElementById("comboBox_JGFDQZY_3000H") as HTMLSelectElement | null)?.value || "0:1倍";
   helper_1.setValueByName(
     CSZD3000H_FIELDS.laserAmplifierGain,
     LaserAmplifierGainMap[LaserAmplifierGain] ?? 0,
@@ -4338,12 +4421,13 @@ const loadCommand_CSZD_3000H = () => {
     return;
   }
 
-  let wirePayload;
+  let wirePayload: Uint8Array;
   try {
     wirePayload = buildCSZD3000HWirePayload(payload1, payload2);
   } catch (err) {
+    const e = err as Error;
     console.error("[CSZD3000H] 载荷组帧失败:", err);
-    statusBar.errorMessage(`参数装订组帧失败: ${err.message}`);
+    statusBar.errorMessage(`参数装订组帧失败: ${e.message}`);
     return;
   }
 
@@ -4369,15 +4453,16 @@ const loadCommand_CSZD_3000H = () => {
   wsClient.sendUdp(packet);
 };
 
-function captureCommandPacket(loadCommand, label) {
+function captureCommandPacket(loadCommand: () => void, label: string): Uint8Array {
   const originalSendUdp = wsClient.sendUdp;
   const originalSendMessage = statusBar.sendMessage;
-  let packet = null;
+  let packet: Uint8Array | null = null;
 
-  wsClient.sendUdp = (data) => {
+  wsClient.sendUdp = (data: Uint8Array): boolean => {
     packet = new Uint8Array(data);
+    return true;
   };
-  statusBar.sendMessage = () => {};
+  statusBar.sendMessage = (): void => {};
 
   try {
     loadCommand();
@@ -4392,7 +4477,7 @@ function captureCommandPacket(loadCommand, label) {
   return packet;
 }
 
-async function generateCSZD3000HDat() {
+async function generateCSZD3000HDat(): Promise<void> {
   try {
     const cszdPacket = captureCommandPacket(loadCommand_CSZD_3000H, "CSZD_3000H");
     const jgcszdPacket = captureCommandPacket(loadCommand_JGCSZD, "JGCSZD");
@@ -4409,13 +4494,14 @@ async function generateCSZD3000HDat() {
     await saveBinaryFile(merged, filename);
     statusBar.successMessage(`generated ${filename}, ${merged.length} bytes`);
   } catch (err) {
-    if (err.name === "AbortError") return;
+    const e = err as Error;
+    if (e.name === "AbortError") return;
     console.error("[CSZD3000H] generate dat failed:", err);
-    statusBar.errorMessage(`generate dat failed: ${err.message}`);
+    statusBar.errorMessage(`generate dat failed: ${e.message}`);
   }
 }
 
-export const handle_CSZD_Recv_3000H = (data) => {
+export const handle_CSZD_Recv_3000H = (data: Uint8Array): void => {
   console.log("[DataHandler] 参数装订应答");
   statusBar.receiveMessage("参数装订应答", "3000H");
 
@@ -4457,7 +4543,7 @@ const loadCommand_CSZD_4000H = () => {
   statusBar.sendMessage("目标控制参数装订下传", "4000H");
 };
 
-export const handle_CSZD_Recv_4000H = (data) => {
+export const handle_CSZD_Recv_4000H = (data: Uint8Array): void => {
 console.log(Array.from(data )
       .map((b) => b.toString(16).padStart(2, "0"))
       .join(" "));
@@ -4511,7 +4597,7 @@ const loadCommand_FJYJZ_2000H = () => {
   sendBuffer[15] = 0x20; //2000H
   sendBuffer[16] = 0x00;
 
-  const FJYJZ_checked = document.getElementById("select_FJYJZ_20000H")?.checked;
+  const FJYJZ_checked = (document.getElementById("select_FJYJZ_20000H") as HTMLInputElement | null)?.checked;
   if (FJYJZ_checked) {
     sendBuffer[16] = 0xff;
   }
@@ -4519,7 +4605,7 @@ const loadCommand_FJYJZ_2000H = () => {
     statusBar.sendMessage("非均匀校正2000H", "2000h");
 };
 
-export const handle_FJYJZ_2000H = (data) => {
+export const handle_FJYJZ_2000H = (data: Uint8Array): void => {
   if (data[0] == 0x0f) {
     statusBar.addMessage("非均匀校正应答2000H:正常");
   } else if (data[0] == 0xff) {
@@ -4548,7 +4634,7 @@ const loadCommand_FJYJZJG_0020H = () => {
   wsClient.sendUdp(sendBuffer);
 };
 
-export const handle_FJYJZJG_0020H = (data) => {
+export const handle_FJYJZJG_0020H = (data: Uint8Array): void => {
   if (data[0] == 0x0f) {
     statusBar.addMessage("非均匀校正结果应答0020H:正常");
   } else if (data[0] == 0xff) {
