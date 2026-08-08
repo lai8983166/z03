@@ -1,15 +1,130 @@
 import statusBar from "./StatusBar";
 import wsClient from "./Client";
 
-const codeFile = {
+// ==================== 类型定义 ====================
+
+/** 6000H 上传会话种类 */
+type UploadKind = "CX" | "YY";
+
+/** 6000H 协议响应阶段 */
+type ResponseStage = "info" | "upload" | "checksum" | "flash" | "process";
+
+/** 6000H 应答等待的 pending 结构 */
+interface Pending6000Ack {
+    expectedStus?: number;
+    stage?: string;
+    frameIndex?: number;
+    label?: string;
+    timeout?: number;
+    skipOnTimeout?: boolean;
+    waitForAck?: boolean;
+    responseMessage?: string;
+    resolve: (value: AckResult) => void;
+    reject: (reason: Error) => void;
+    timer: ReturnType<typeof setTimeout> | null;
+}
+
+/** send6000Command / waitFor6000Ack 返回的应答结果 */
+interface AckResult {
+    ok: boolean;
+    sentOnly?: boolean;
+    skipped?: boolean;
+    timeout?: boolean;
+    stage?: string;
+    crc?: number;
+    response?: Parsed6000Response;
+    message?: string;
+}
+
+/** 非阻塞 6000H 应答追踪条目 */
+interface NonBlockingAck {
+    expectedStus?: number;
+    stage?: string;
+    frameIndex?: number;
+    label?: string;
+    responseMessage?: string;
+}
+
+/** parse6000Response 解析结果 */
+interface Parsed6000Response {
+    stus: number;
+    type: ResponseStage;
+    result: number;
+    totalFrames?: number;
+    frameIndex?: number;
+    checksum?: number | null;
+}
+
+/** CX 上传会话 */
+interface CXSession {
+    buffer: Uint8Array | null;
+    fileName: string;
+    fileSize: number;
+    ar: number;
+    frameIndex: number;
+    totalFrames: number;
+}
+
+/** YY 上传会话 */
+interface YYSession {
+    buffer: Uint8Array | null;
+    fileName: string;
+    fileSize: number;
+    ar: number;
+    classId: number;
+    frameIndex: number;
+    totalFrames: number;
+    checksum?: number;
+}
+
+/** 6000H 命令发送参数 */
+interface Send6000CommandParams {
+    ar: number;
+    comd: number;
+    cp: Uint16Array;
+    expectedStus?: number;
+    stage?: string;
+    frameIndex?: number;
+    label: string;
+    timeout?: number;
+    skipOnTimeout?: boolean;
+    waitForAck?: boolean;
+    responseMessage?: string;
+}
+
+/** waitFor6000Ack 选项 */
+interface WaitFor6000AckOptions {
+    expectedStus?: number;
+    stage?: string;
+    frameIndex?: number;
+    label?: string;
+    timeout?: number;
+    skipOnTimeout?: boolean;
+    waitForAck?: boolean;
+}
+
+/** 程序下载缓冲 */
+interface CodeDownloadState {
+    chunks: Uint8Array[];
+    totalBytes: number;
+    frameCount: number;
+}
+
+// ==================== 全局状态 ====================
+
+const codeFile: {
+    fileName: string;
+    fileSize: number;
+    buffer: Uint8Array | null;
+} = {
     fileName:"",
     fileSize:0,
     buffer:null,
 }
 
 let sendBuffer = new Uint8Array(1040);
-let resolveAck = null;
-let resolveDownloadAck = null; // 程序下载每包应答 resolve
+let resolveAck: (() => void) | null = null;
+let resolveDownloadAck: ((isDone: boolean) => void) | null = null; // 程序下载每包应答 resolve
 let codedownload_crc = 0;
 let code_length = 0;
 let last_packet_size = 0;
@@ -28,33 +143,33 @@ const SIXK_CO = 0x6000;
 const SIXK_AT = 0x52;
 const YY_UPLOAD_ACK_WAIT_MS=1000;
 
-const codeUploadSessions = {
+const codeUploadSessions: { CX: CXSession; YY: YYSession } = {
     CX: { buffer: null, fileName: "", fileSize: 0, ar: 0xa0, frameIndex: 1, totalFrames: 0 },
     YY: { buffer: null, fileName: "", fileSize: 0, ar: 0xa0, classId: 0, frameIndex: 1, totalFrames: 0 },
 };
 
-let pending6000Ack = null;
+let pending6000Ack: Pending6000Ack | null = null;
 // 不阻塞发送的 6000H 指令仍保留应答匹配，收到设备应答后再输出接收日志。
-const nonBlocking6000Acks = [];
+const nonBlocking6000Acks: NonBlockingAck[] = [];
 // 6000H 协议按设备约定不做超时和重传；相关实现保留，便于后续需要时重新启用。
 const ENABLE_6000_TIMEOUT_RETRY = false;
 const MAX_6000_FRAME_COUNT = 0xffff;
 
-const saturate6000FrameCount = (value) => Math.min(
+const saturate6000FrameCount = (value: number): number => Math.min(
     MAX_6000_FRAME_COUNT,
     Math.max(0, Math.trunc(value)),
 );
 
-const readU16BE = (data, offset) => (data[offset] << 8) | data[offset + 1];
+const readU16BE = (data: Uint8Array, offset: number): number => (data[offset] << 8) | data[offset + 1];
 
-const writeU16BE = (data, offset, value) => {
+const writeU16BE = (data: Uint8Array, offset: number, value: number): void => {
     data[offset] = (value >>> 8) & 0xff;
     data[offset + 1] = value & 0xff;
 };
 
 // 6000H 文档只给出 CCITT-CRC，采用常见的 CRC-16/CCITT-FALSE 参数。
 // CRC 覆盖 AR、AT、CO、COMD 和 CP，不覆盖外层 0~11 字节及 CRC 自身。
-const crc16Ccitt = (data) => {
+const crc16Ccitt = (data: Uint8Array): number => {
     let crc = 0xffff;
     for (const byte of data) {
         crc ^= byte << 8;
@@ -66,10 +181,10 @@ const crc16Ccitt = (data) => {
     return crc;
 };
 
-// 协议中的“程序校验和”是 32 位双字累加和，不是 CRC。
+// 协议中的"程序校验和"是 32 位双字累加和，不是 CRC。
 // 6000H 改为大端后，双字也按高字节在前累加；
 // 校验范围按完整上传帧长度计算，缺失字节使用 0xFF 补齐。
-const sum32Words = (buffer) => {
+const sum32Words = (buffer: Uint8Array): number => {
     let sum = 0;
     for (let offset = 0; offset < buffer.length; offset += 4) {
         const value = ((buffer[offset] || 0) << 24)
@@ -81,32 +196,39 @@ const sum32Words = (buffer) => {
     return sum >>> 0;
 };
 
-const selectedValue = (id, fallback) => {
-    const element = document.getElementById(id);
+const selectedValue = (id: string, fallback: number): number => {
+    const element = document.getElementById(id) as (HTMLSelectElement | HTMLInputElement) | null;
     if (!element || element.value === "") return fallback;
     return Number.parseInt(element.value, 0);
 };
 
-const get6000Ar = (kind) => selectedValue(
+const get6000Ar = (kind: UploadKind): number => selectedValue(
     kind === "CX" ? "select_6000H_CX_AR" : "select_6000H_YY_AR",
     0xa0,
 );
 
-const get6000ClassId = () => Math.max(0, Math.min(4, selectedValue("select_6000H_YY_CLASS", 0)));
+const get6000ClassId = (): number => Math.max(0, Math.min(4, selectedValue("select_6000H_YY_CLASS", 0)));
 
-const require6000File = (kind) => {
+function require6000File(kind: "CX"): CXSession;
+function require6000File(kind: "YY"): YYSession;
+function require6000File(kind: UploadKind): CXSession | YYSession {
     const session = codeUploadSessions[kind];
     if (!session.buffer || session.fileSize === 0) {
         throw new Error(`${kind === "CX" ? "擦写软件" : "应用软件"}程序文件尚未加载`);
     }
     return session;
-};
+}
 
-const load6000File = (kind, file, labelId) => new Promise((resolve, reject) => {
+const load6000File = (kind: UploadKind, file: File, labelId: string): Promise<CXSession | YYSession> => new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = (event: ProgressEvent<FileReader>) => {
+        const target = event.target;
+        if (!target || !target.result) {
+            reject(new Error("程序文件读取失败"));
+            return;
+        }
         const session = codeUploadSessions[kind];
-        session.buffer = new Uint8Array(event.target.result);
+        session.buffer = new Uint8Array(target.result as ArrayBuffer);
         session.fileName = file.name;
         session.fileSize = session.buffer.length;
         session.frameIndex = 1;
@@ -123,18 +245,20 @@ const load6000File = (kind, file, labelId) => new Promise((resolve, reject) => {
     reader.readAsArrayBuffer(file);
 });
 
-const bind6000FilePicker = (kind, buttonId, labelId) => {
+const bind6000FilePicker = (kind: UploadKind, buttonId: string, labelId: string): void => {
     document.getElementById(buttonId)?.addEventListener("click", () => {
         const input = document.createElement("input");
         input.type = "file";
-        input.onchange = async (event) => {
-            const file = event.target.files?.[0];
+        input.onchange = async (event: Event) => {
+            const target = event.target as HTMLInputElement;
+            const file = target.files?.[0];
             if (!file) return;
             try {
                 await load6000File(kind, file, labelId);
             } catch (error) {
+                const msg = error instanceof Error ? error.message : String(error);
                 console.error(error);
-                statusBar.receiveMessage(error.message, "6000H");
+                statusBar.receiveMessage(msg, "6000H");
             }
         };
         input.click();
@@ -142,28 +266,31 @@ const bind6000FilePicker = (kind, buttonId, labelId) => {
 };
 
 // ==================== 程序下载（A000H）接收缓冲 ====================
-const codeDownload = {
+const codeDownload: CodeDownloadState = {
     chunks: [],       // 收到的每包 Uint8Array 数据
     totalBytes: 0,    // 已收到字节数
     frameCount: 0,    // 已收到帧数
 };
 
-function resetCodeDownload() {
+function resetCodeDownload(): void {
     codeDownload.chunks = [];
     codeDownload.totalBytes = 0;
     codeDownload.frameCount = 0;
 }
 
-export function initializeCodeUpload() {
+export function initializeCodeUpload(): void {
     document.getElementById("pushtton_codefileupload")?.addEventListener("click", () => {
         const input = document.createElement("input");
         input.type = "file";
-        input.onchange = (e) => {
-            const file = e.target.files[0];
+        input.onchange = (e: Event) => {
+            const target = e.target as HTMLInputElement;
+            const file = target.files?.[0];
             if (file) {
                 const reader = new FileReader();
-                reader.onload = function (event) {
-                    const arrayBuffer = event.target.result;
+                reader.onload = function (event: ProgressEvent<FileReader>) {
+                    const evtTarget = event.target;
+                    if (!evtTarget || !evtTarget.result) return;
+                    const arrayBuffer = evtTarget.result as ArrayBuffer;
                     codeFile.buffer = new Uint8Array(arrayBuffer);
                     codeFile.fileName = file.name;
                     codeFile.fileSize = codeFile.buffer.length;
@@ -174,14 +301,14 @@ export function initializeCodeUpload() {
                         codeFile.buffer.length,
                         "字节",
                     );
-                    
+
                 };
                 reader.readAsArrayBuffer(file);
             }
         };
         input.click();
         const codeFileName = document.getElementById("codefile_name");
-        codeFileName.innerText = `程序文件名：${codeFile.fileName}`;
+        if (codeFileName) codeFileName.innerText = `程序文件名：${codeFile.fileName}`;
     });
 
     bind6000FilePicker(
@@ -196,9 +323,9 @@ export function initializeCodeUpload() {
     );
 
     document.getElementById("pushbutton_codeupload_handshake")?.addEventListener("click", () => {
-        
+
         loadCommand_CXSC_CodeUpload_HandShake_9000H();
-        
+
     });
 
     document.getElementById("pushbutton_codedataupload_handshake")?.addEventListener("click", () => {
@@ -230,8 +357,8 @@ export function initializeCodeUpload() {
         runCodeDownload();
 
     });
-    
-    
+
+
     document.getElementById("pushbutton_codedownload_crc")?.addEventListener("click", () => {
         loadCommand_codedownload_crc();
 
@@ -261,7 +388,7 @@ export function initializeCodeUpload() {
     });
 }
 
-const loadCommand_CXSC_CodeUpload_HandShake_9000H = () => {
+const loadCommand_CXSC_CodeUpload_HandShake_9000H = (): void => {
     sendBuffer[0] = 0x31;
     sendBuffer[1] = 0x02;
     sendBuffer[2] = 0x01;
@@ -281,23 +408,23 @@ const loadCommand_CXSC_CodeUpload_HandShake_9000H = () => {
     sendBuffer[16] = 0x14;
     sendBuffer[17] = 0x06; //0614H
     wsClient.sendUdp(sendBuffer);
-    
+
     statusBar.sendMessage("进入上传程序命令握手", "9000H");
 }
 
-export const handle_CXSC_CodeUpload_HandShake_0615H_9000H = (data) => {
+export const handle_CXSC_CodeUpload_HandShake_0615H_9000H = (data: Uint8Array): void => {
     if (data[0] == 0x15 && data[1] == 0x06) {
         statusBar.receiveMessage("进入上传程序命令握手应答", "9000H");
     }
 }
 
-export const handle_CXSC_CodeUpload_HandShake_0616H_9000H = (data) => {
+export const handle_CXSC_CodeUpload_HandShake_0616H_9000H = (data: Uint8Array): void => {
     if (data[0] == 0x16 && data[1] == 0x06) {
         statusBar.receiveMessage("进入上传程序命令就绪应答", "9000H");
     }
 }
 
-const loadCommand_CXSC_CodeDataUpload_Handshake_9000H = () => {
+const loadCommand_CXSC_CodeDataUpload_Handshake_9000H = (): void => {
     sendBuffer[0] = 0x31;
     sendBuffer[1] = 0x02;
     sendBuffer[2] = 0x01;
@@ -319,7 +446,7 @@ const loadCommand_CXSC_CodeDataUpload_Handshake_9000H = () => {
     sendBuffer[18] = 0x00;
     sendBuffer[19] = 0x00;//帧计数00H
 
-    
+
     sendBuffer[20] = codeFile.fileSize & 0xff;
     sendBuffer[21] = (codeFile.fileSize >> 8) & 0xff;
     sendBuffer[22] = (codeFile.fileSize >> 16) & 0xff;
@@ -330,13 +457,13 @@ const loadCommand_CXSC_CodeDataUpload_Handshake_9000H = () => {
     statusBar.sendMessage("进入上传程序命令握手", "9000H");
 }
 
-export const handle_CXSC_CodeDataUpload_Handshake_9000H = (data) => {
+export const handle_CXSC_CodeDataUpload_Handshake_9000H = (data: Uint8Array): void => {
     if (data[0] == 0x15 && data[1] == 0x06) {
         statusBar.receiveMessage("数据上传握手应答", "9000H");
     }
 }
 
-const loadCommand_CXSC_CodeUpload_9000H = async() => {
+const loadCommand_CXSC_CodeUpload_9000H = async (): Promise<void> => {
     //let offset = 0;
     const totalFrameCount = codeFile.fileSize / 1000;
     let curFrame = 0;
@@ -371,13 +498,13 @@ const loadCommand_CXSC_CodeUpload_9000H = async() => {
         sendBuffer[23] = 0x00; //上传结束标识 00H传输中 01H结束
 
         let frameStart = curFrame * 1000;
-        if (frameStart >= codeFile.buffer.length) break;
+        if (codeFile.buffer === null || frameStart >= codeFile.buffer.length) break;
         let frameEnd = codeFile.fileSize;
-        
-        
-        
+
+
+
         let chunkSize = Math.min(1000, frameEnd - frameStart);
-            
+
             sendBuffer[20] = chunkSize & 0xff;
             sendBuffer[21] = (chunkSize >> 8) & 0xff;
             //设置上传结束标识
@@ -404,7 +531,7 @@ const loadCommand_CXSC_CodeUpload_9000H = async() => {
 
         wsClient.sendUdp(sendBuffer);
 
-        await new Promise((resolve) => {
+        await new Promise<void>((resolve) => {
             resolveAck = resolve;
         });
 
@@ -412,7 +539,7 @@ const loadCommand_CXSC_CodeUpload_9000H = async() => {
     }
 }
 
-export const handle_CXSC_CodeUpload_9000H = (data) => {
+export const handle_CXSC_CodeUpload_9000H = (data: Uint8Array): void => {
     let str1 = "";
     let str2 = "";
     if (data[0] == 0x40 && data[1] == 0x06) {
@@ -436,9 +563,9 @@ export const handle_CXSC_CodeUpload_9000H = (data) => {
     statusBar.receiveMessage(str1+str2, "9000H");
 }
 
-const loadCommand_CXSC_CodeData_Check_9000H = () => {
-    
-    
+const loadCommand_CXSC_CodeData_Check_9000H = (): void => {
+
+
 
     sendBuffer[0] = 0x31;
     sendBuffer[1] = 0x02;
@@ -470,7 +597,7 @@ const loadCommand_CXSC_CodeData_Check_9000H = () => {
     wsClient.sendUdp(sendBuffer);
 }
 
-export const handle_CXSC_CodeData_Check_9000H = (data) => {
+export const handle_CXSC_CodeData_Check_9000H = (data: Uint8Array): void => {
     let str1 = "";
     let str2 = "";
     if (data[0] == 0x55 && data[1] == 0x06) {
@@ -482,11 +609,11 @@ export const handle_CXSC_CodeData_Check_9000H = (data) => {
         str2 = "异常:";
     }
     const crc = data.subarray(4, 8);
-    const hex = Array.from(crc, b => b.toString(16).padStart(2, '0')).join('');
+    const hex = Array.from(crc, (b: number) => b.toString(16).padStart(2, '0')).join('');
     statusBar.receiveMessage(str1 + str2 + hex, "9000H");
 }
 
-const loadCommand_CXSC_Code_Write_9000H = () => {
+const loadCommand_CXSC_Code_Write_9000H = (): void => {
     sendBuffer[0] = 0x31;
     sendBuffer[1] = 0x02;
     sendBuffer[2] = 0x01;
@@ -512,9 +639,9 @@ const loadCommand_CXSC_Code_Write_9000H = () => {
     statusBar.sendMessage("发送程序烧写命令,等待烧写", "9000H");
 }
 
-export const handle_CXSC_Code_Write_9000H = (data) => {
+export const handle_CXSC_Code_Write_9000H = (data: Uint8Array): void => {
     //statusBar.receiveMessage("烧写状态回复", "9000H");
-    if (data[0] = 0x65 && data[1] == 0x06) {
+    if ((data[0] = 0x65, data[1] == 0x06)) {
         if (data[2] == 0x01) {
             statusBar.receiveMessage("烧写进行中", "9000H");
         } else if (data[2] == 0x02) {
@@ -523,7 +650,7 @@ export const handle_CXSC_Code_Write_9000H = (data) => {
     }
 }
 
-const loadCommand_codeDownload_handshake_9000H=() => {
+const loadCommand_codeDownload_handshake_9000H=(): void => {
     sendBuffer[0] = 0x31;
     sendBuffer[1] = 0x02;
     sendBuffer[2] = 0x01;
@@ -551,7 +678,7 @@ const loadCommand_codeDownload_handshake_9000H=() => {
     statusBar.sendMessage("发送程序查询握手命令", "A000H");
 }
 
-export const handle_codeDownload_handshake_9000H = (data) => {
+export const handle_codeDownload_handshake_9000H = (data: Uint8Array): void => {
     if (data[0] == 0x15 && data[1] == 0x06) {
         statusBar.receiveMessage("收到程序查询握手回复", "A000H");
     }
@@ -561,7 +688,7 @@ export const handle_codeDownload_handshake_9000H = (data) => {
     console.log(code_length);
 }
 
-const loadCommand_codeDownload = (frameIdx = 0)=>{
+const loadCommand_codeDownload = (frameIdx: number = 0): void => {
     sendBuffer[0] = 0x31;
     sendBuffer[1] = 0x02;
     sendBuffer[2] = 0x01;
@@ -590,9 +717,9 @@ const loadCommand_codeDownload = (frameIdx = 0)=>{
         sendBuffer[20] = last_packet_size & 0xff;
         sendBuffer[21] = (last_packet_size >> 8) & 0xff;
     }
-    
 
-    
+
+
 
     wsClient.sendUdp(sendBuffer);
 
@@ -603,7 +730,7 @@ const loadCommand_codeDownload = (frameIdx = 0)=>{
  * 程序下载主循环：每发一包请求，等待设备返回该包数据后再发下一包，
  * 直到收到结束标志（endFlag === 0x0001）为止。
  */
-const runCodeDownload = async () => {
+const runCodeDownload = async (): Promise<void> => {
     resetCodeDownload();
     let frameIdx = 0;
 
@@ -614,7 +741,7 @@ const runCodeDownload = async () => {
         loadCommand_codeDownload(frameIdx);
 
         // 等待 handle_codeDownload_a000H resolve
-        const isDone = await new Promise((resolve) => {
+        const isDone = await new Promise<boolean>((resolve) => {
             resolveDownloadAck = resolve;
         });
 
@@ -624,7 +751,7 @@ const runCodeDownload = async () => {
     }
 }
 
-export const handle_codeDownload_a000H = (data) => {
+export const handle_codeDownload_a000H = (data: Uint8Array): void => {
     if (data[0] !== 0x40 || data[1] !== 0x06) return;
 
     const frameIdx = data[2] | (data[3] << 8);  // 帧计数
@@ -696,7 +823,7 @@ export const handle_codeDownload_a000H = (data) => {
     }
 }
 
-const loadCommand_codedownload_crc = () => {
+const loadCommand_codedownload_crc = (): void => {
     sendBuffer[0] = 0x31;
     sendBuffer[1] = 0x02;
     sendBuffer[2] = 0x01;
@@ -726,7 +853,7 @@ const loadCommand_codedownload_crc = () => {
     statusBar.sendMessage(`发送程序下载数据校验`, "A000H");
 }
 
-export const handle_codedownload_crc = (data) => {
+export const handle_codedownload_crc = (data: Uint8Array): void => {
     statusBar.receiveMessage(`校验和：${data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24)}`);
     if (data[2] == 0x00) {
         statusBar.receiveMessage("程序下载数据校验正常", "A000H");
@@ -735,7 +862,7 @@ export const handle_codedownload_crc = (data) => {
     }
 }
 
-const build6000Packet = (ar, comd, cpWords) => {
+const build6000Packet = (ar: number, comd: number, cpWords: Uint16Array): Uint8Array => {
     if (cpWords.length !== SIXK_CP_WORDS) {
         throw new Error(`6000H CP 必须为 ${SIXK_CP_WORDS} 个字`);
     }
@@ -753,17 +880,17 @@ const build6000Packet = (ar, comd, cpWords) => {
     writeU16BE(packet, 14, SIXK_CO);
     writeU16BE(packet, 16, comd);
 
-    cpWords.forEach((word, index) => writeU16BE(packet, 18 + index * 2, word));
-    
-    
+    cpWords.forEach((word: number, index: number) => writeU16BE(packet, 18 + index * 2, word));
+
+
 
     //const crc = crc16Ccitt(packet.subarray(12, 76));
-    
+
     //writeU16BE(packet, 76, crc);
     return packet;
 };
 
-const createInfoCp = (session) => {
+const createInfoCp = (session: CXSession | YYSession): Uint16Array => {
     const cp = new Uint16Array(SIXK_CP_WORDS);
     cp[0] = saturate6000FrameCount(session.totalFrames);
     cp[1] = (session.fileSize >>> 16) & 0xffff;
@@ -771,38 +898,41 @@ const createInfoCp = (session) => {
     return cp;
 };
 
-const createDataCp = (session, frameIndex) => {
+const createDataCp = (session: CXSession | YYSession, frameIndex: number): Uint16Array => {
     const cp = new Uint16Array(SIXK_CP_WORDS);
     const frameStart = (frameIndex - 1) * CODE_BYTES_PER_FRAME;
     const isLast = frameIndex === session.totalFrames;
     cp[0] = saturate6000FrameCount(frameIndex);
     cp[1] = isLast ? 0xffff : 0x0000;
 
+    const buffer = session.buffer;
+    if (buffer === null) return cp;
+
     for (let wordIndex = 0; wordIndex < CODE_WORDS_PER_FRAME; wordIndex++) {
         const byteOffset = frameStart + wordIndex * 2;
-        const high = session.buffer[byteOffset] ?? 0xff;
-        const low = session.buffer[byteOffset + 1] ?? 0xff;
+        const high = buffer[byteOffset] ?? 0xff;
+        const low = buffer[byteOffset + 1] ?? 0xff;
         cp[2 + wordIndex] = (high << 8) | low;
     }
     // cp[28] 是备用字，Uint16Array 已初始化为 0。
     return cp;
 };
 
-const createChecksumCp = (checksum) => {
+const createChecksumCp = (checksum: number): Uint16Array => {
     const cp = new Uint16Array(SIXK_CP_WORDS);
     cp[0] = (checksum >>> 16) & 0xffff;
     cp[1] = checksum & 0xffff;
     return cp;
 };
 
-const resultDescription = (result, type) => {
+const resultDescription = (result: number, type: ResponseStage): string => {
     if (result === 0) return "正常";
     if (type === "upload") {
         return ({
             0x0001: "帧计数超界",
             0x0002: "帧计数不连续",
             0x0004: "比对错误",
-        })[result] || `异常(0x${result.toString(16).padStart(4, "0")})`;
+        } as Record<number, string>)[result] || `异常(0x${result.toString(16).padStart(4, "0")})`;
     }
     if (type === "checksum") return result === 0xffff ? "校验和异常" : `异常(0x${result.toString(16)})`;
     if (type === "flash") {
@@ -811,26 +941,26 @@ const resultDescription = (result, type) => {
             0x0002: "写入失败",
             0x0004: "关闭写保护失败",
             0x0008: "擦写后写保护失败",
-        })[result] || `异常(0x${result.toString(16).padStart(4, "0")})`;
+        } as Record<number, string>)[result] || `异常(0x${result.toString(16).padStart(4, "0")})`;
     }
     return `异常(0x${result.toString(16).padStart(4, "0")})`;
 };
 
-const completePending6000 = (result) => {
+const completePending6000 = (result: AckResult): void => {
     if (!pending6000Ack) return;
     const pending = pending6000Ack;
     pending6000Ack = null;
-    clearTimeout(pending.timer);
-    result.ok ? pending.resolve(result) : pending.reject(new Error(result.message));
+    if (pending.timer !== null) clearTimeout(pending.timer);
+    result.ok ? pending.resolve(result) : pending.reject(new Error(result.message ?? ""));
 };
 
-const waitFor6000Ack = (packet, options) => new Promise((resolve, reject) => {
+const waitFor6000Ack = (packet: Uint8Array, options: WaitFor6000AckOptions): Promise<AckResult> => new Promise<AckResult>((resolve, reject) => {
     if (pending6000Ack) {
         reject(new Error("6000H 仍有未完成的应答等待"));
         return;
     }
 
-    const pending = {
+    const pending: Pending6000Ack = {
         ...options,
         resolve,
         reject,
@@ -859,15 +989,15 @@ const waitFor6000Ack = (packet, options) => new Promise((resolve, reject) => {
     }
 });
 
-const send6000WithRetry = async (packet, options) => {
+const send6000WithRetry = async (packet: Uint8Array, options: WaitFor6000AckOptions): Promise<AckResult> => {
     //const retryCount = ENABLE_6000_TIMEOUT_RETRY ? (options.retryCount ?? 2) : 0;
-    const retryCount = options.skipOnTimeout?0:(ENABLE_6000_TIMEOUT_RETRY?(options.retryCount??2):0);
-    let lastError = null;
+    const retryCount = options.skipOnTimeout?0:(ENABLE_6000_TIMEOUT_RETRY?((options as WaitFor6000AckOptions & { retryCount?: number }).retryCount??2):0);
+    let lastError: Error | null = null;
     for (let attempt = 0; attempt <= retryCount; attempt++) {
         try {
             return await waitFor6000Ack(packet, options);
         } catch (error) {
-            lastError = error;
+            lastError = error instanceof Error ? error : new Error(String(error));
             if (attempt < retryCount) {
                 statusBar.sendMessage(`${options.label}超时，重发第${attempt + 1}次`, "6000H");
             }
@@ -876,19 +1006,8 @@ const send6000WithRetry = async (packet, options) => {
     throw lastError;
 };
 
-const send6000Command = async ({
-    ar,
-    comd,
-    cp,
-    expectedStus,
-    stage,
-    frameIndex,
-    label,
-    timeout,
-    skipOnTimeout = false,
-    waitForAck = true,
-    responseMessage,
-}) => {
+const send6000Command = async (params: Send6000CommandParams): Promise<AckResult> => {
+    const { ar, comd, cp, expectedStus, stage, frameIndex, label, timeout, skipOnTimeout = false, waitForAck = true, responseMessage } = params;
     const packet = build6000Packet(ar, comd, cp);
     statusBar.sendMessage(`${label}（${packet.length}字节）`, "6000H");
     /*const HexString = Array.from(packet)
@@ -921,14 +1040,15 @@ const send6000Command = async ({
     });
 };
 
-const run6000Operation = (operation) => {
-    operation().catch((error) => {
+const run6000Operation = (operation: () => Promise<void>): void => {
+    operation().catch((error: unknown) => {
+        const msg = error instanceof Error ? error.message : String(error);
         console.error("6000H 操作失败:", error);
-        statusBar.receiveMessage(`6000H失败：${error.message}`, "6000H");
+        statusBar.receiveMessage(`6000H失败：${msg}`, "6000H");
     });
 };
 
-export const loadCommand_6000H_CX_handshake = async (ar = get6000Ar("CX")) => {
+export const loadCommand_6000H_CX_handshake = async (ar: number = get6000Ar("CX")): Promise<void> => {
     const session = require6000File("CX");
     session.ar = ar & 0xff;
     await send6000Command({
@@ -943,7 +1063,7 @@ export const loadCommand_6000H_CX_handshake = async (ar = get6000Ar("CX")) => {
     });
 };
 
-export const loadCommand_6000H_CX_upload = async (ar = get6000Ar("CX")) => {
+export const loadCommand_6000H_CX_upload = async (ar: number = get6000Ar("CX")): Promise<void> => {
     const session = require6000File("CX");
     session.ar = ar & 0xff;
     for (let frameIndex = 1; frameIndex <= session.totalFrames; frameIndex++) {
@@ -961,7 +1081,7 @@ export const loadCommand_6000H_CX_upload = async (ar = get6000Ar("CX")) => {
     statusBar.receiveMessage("擦写软件上传完成", "6000H");
 };
 
-export const loadCommand_6000H_CX_process = async (ar = get6000Ar("CX")) => {
+export const loadCommand_6000H_CX_process = async (ar: number = get6000Ar("CX")): Promise<void> => {
     const session = require6000File("CX");
     session.ar = ar & 0xff;
     await send6000Command({
@@ -975,7 +1095,7 @@ export const loadCommand_6000H_CX_process = async (ar = get6000Ar("CX")) => {
     statusBar.receiveMessage("擦写程序运行应答正常", "6000H");
 };
 
-export const loadCommand_handshake_6000H_YY = async (ar = get6000Ar("YY")) => {
+export const loadCommand_handshake_6000H_YY = async (ar: number = get6000Ar("YY")): Promise<void> => {
     const session = require6000File("YY");
     session.ar = ar & 0xff;
     session.classId = get6000ClassId();
@@ -992,7 +1112,7 @@ export const loadCommand_handshake_6000H_YY = async (ar = get6000Ar("YY")) => {
     });
 };
 
-export const loadCommand_uploadData_6000H_YY = async (ar = get6000Ar("YY")) => {
+export const loadCommand_uploadData_6000H_YY = async (ar: number = get6000Ar("YY")): Promise<void> => {
     const session = require6000File("YY");
     session.ar = ar & 0xff;
     session.classId = get6000ClassId();
@@ -1013,11 +1133,11 @@ export const loadCommand_uploadData_6000H_YY = async (ar = get6000Ar("YY")) => {
     statusBar.receiveMessage("应用软件上传完成", "6000H");
 };
 
-export const loadCommand_dataCheck_6000H_YY = async (ar = get6000Ar("YY")) => {
+export const loadCommand_dataCheck_6000H_YY = async (ar: number = get6000Ar("YY")): Promise<void> => {
     const session = require6000File("YY");
     session.ar = ar & 0xff;
     session.classId = get6000ClassId();
-    session.checksum = sum32Words(session.buffer);
+    session.checksum = sum32Words(session.buffer!);
     await send6000Command({
         ar: session.ar,
         comd: 0x0650 + session.classId,
@@ -1031,7 +1151,7 @@ export const loadCommand_dataCheck_6000H_YY = async (ar = get6000Ar("YY")) => {
     });
 };
 
-export const loadCommand_flashWrite_6000H_YY = async (ar = get6000Ar("YY")) => {
+export const loadCommand_flashWrite_6000H_YY = async (ar: number = get6000Ar("YY")): Promise<void> => {
     const session = require6000File("YY");
     session.ar = ar & 0xff;
     session.classId = get6000ClassId();
@@ -1047,7 +1167,7 @@ export const loadCommand_flashWrite_6000H_YY = async (ar = get6000Ar("YY")) => {
     statusBar.receiveMessage("应用软件 FLASH 擦除及写入完成", "6000H");
 };
 
-const parse6000Response = (data) => {
+const parse6000Response = (data: Uint8Array): Parsed6000Response | null => {
     if (!data || data.length < 2) return null;
     const stus = readU16BE(data, 0);
     if (stus >= 0x0615 && stus <= 0x0619) {
@@ -1086,7 +1206,7 @@ const parse6000Response = (data) => {
     return null;
 };
 
-export const handle_6000H_response = (data) => {
+export function handle_6000H_response(data: Uint8Array, _meta?: unknown): void {
     const response = parse6000Response(data);
     const nonBlockingIndex = response
         ? nonBlocking6000Acks.findIndex((ack) => (
@@ -1097,14 +1217,14 @@ export const handle_6000H_response = (data) => {
 
     if (nonBlockingIndex >= 0) {
         const [ack] = nonBlocking6000Acks.splice(nonBlockingIndex, 1);
-        const result = response.result ?? 0;
+        const result = response!.result ?? 0;
         if (result === 0) {
             if (ack.responseMessage) {
                 statusBar.receiveMessage(ack.responseMessage, "6000H");
             }
         } else {
             statusBar.receiveMessage(
-                `${ack.label}应答失败：${resultDescription(result, response.type)}`,
+                `${ack.label}应答失败：${resultDescription(result, response!.type)}`,
                 "6000H",
             );
         }
@@ -1143,7 +1263,7 @@ export const handle_6000H_response = (data) => {
         return;
     }
     completePending6000({ ok: true, response });
-};
+}
 
 // 保留旧的命名导出，便于已有调用方逐步迁移。
 export const handle_handshake_6000H_CX = handle_6000H_response;

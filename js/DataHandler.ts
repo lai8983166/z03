@@ -162,7 +162,6 @@ export function handleRS485(flag: number, name: string, data: Uint8Array, meta: 
         break;
 
       case 44:
-          // @ts-expect-error handle_6000H_response 来自 CodeUpload.js，未 TS 化（change C 处理），实际接受 2 参数
           handle_6000H_response(data, meta);
           break;
 

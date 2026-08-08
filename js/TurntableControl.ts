@@ -47,7 +47,10 @@
  *   const lines = await readTxtFileAsLines();
  *   if (lines) console.log(lines); // ["第一行", "第二行", ...]
  */
-export function readTxtFileAsLines({ skipEmpty = true, trim = true } = {}) {
+export function readTxtFileAsLines({ skipEmpty = true, trim = true } = {} as {
+  skipEmpty?: boolean;
+  trim?: boolean;
+}): Promise<string[] | null> {
   return new Promise((resolve) => {
     // 创建隐藏的 <input type="file"> 触发系统文件选择框
     const input = document.createElement("input");
@@ -64,13 +67,13 @@ export function readTxtFileAsLines({ skipEmpty = true, trim = true } = {}) {
 
       const reader = new FileReader();
       reader.onload = (e) => {
-        const text = e.target.result;
+        const text = e.target?.result as string;
 
         // 统一换行符（兼容 \r\n / \r / \n）
         let lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
 
-        if (trim)      lines = lines.map((l) => l.trim());
-        if (skipEmpty) lines = lines.filter((l) => l.length > 0);
+        if (trim)      lines = lines.map((l: string) => l.trim());
+        if (skipEmpty) lines = lines.filter((l: string) => l.length > 0);
 
         resolve(lines);
       };
@@ -106,7 +109,11 @@ export function readTxtFileAsLines({ skipEmpty = true, trim = true } = {}) {
  *   const ok = await saveLinesToTxtFile(["第一行", "第二行"], "结果.txt");
  *   if (ok) console.log("保存成功");
  */
-export async function saveLinesToTxtFile(lines, filename = "output.txt", lineEnding = "\r\n") {
+export async function saveLinesToTxtFile(
+  lines: string[],
+  filename = "output.txt",
+  lineEnding = "\r\n",
+): Promise<boolean> {
   if (!Array.isArray(lines)) {
     console.error("[TurntableControl] saveLinesToTxtFile: 参数必须是数组");
     return false;
@@ -116,9 +123,19 @@ export async function saveLinesToTxtFile(lines, filename = "output.txt", lineEnd
   const blob = new Blob(["\uFEFF" + content], { type: "text/plain;charset=utf-8" }); // BOM 防止中文乱码
 
   // ---- 方案A：File System Access API（Chrome/Edge 支持，有原生保存框）----
-  if (typeof window.showSaveFilePicker === "function") {
+  if (typeof (window as unknown as { showSaveFilePicker?: unknown }).showSaveFilePicker === "function") {
     try {
-      const handle = await window.showSaveFilePicker({
+      const handle = await (window as unknown as {
+        showSaveFilePicker: (opts: {
+          suggestedName: string;
+          types: { description: string; accept: Record<string, string[]> }[];
+        }) => Promise<{
+          createWritable: () => Promise<{
+            write: (data: Blob) => Promise<void>;
+            close: () => Promise<void>;
+          }>;
+        }>;
+      }).showSaveFilePicker({
         suggestedName: filename,
         types: [{ description: "文本文件", accept: { "text/plain": [".txt"] } }],
       });
@@ -128,11 +145,11 @@ export async function saveLinesToTxtFile(lines, filename = "output.txt", lineEnd
       console.log("[TurntableControl] 文件已保存（File System Access API）");
       return true;
     } catch (err) {
-      if (err.name === "AbortError") {
+      if ((err as Error).name === "AbortError") {
         // 用户取消
         return false;
       }
-      console.warn("[TurntableControl] showSaveFilePicker 失败，降级到下载链接:", err);
+      console.warn("[TurntableControl] showSaveFilePicker 失败，降级到下载链接:", err as Error);
       // 降级到方案B
     }
   }
@@ -163,6 +180,13 @@ import {
   stopSJCJF000H,
 } from "./Command";
 
+// ---- 扩展 window 类型：Excel 扫描缓存 ----
+declare global {
+  interface Window {
+    _excelScanPositions?: number[][];
+  }
+}
+
 /**
  * 计算协议校验和。
  * 规则：从 `$` 到 `*`（不含两端）之间所有字符的字节异或和，取低8位，
@@ -171,7 +195,7 @@ import {
  * @param {string} body  `$` 和 `*` 之间的字符串，例如 "MNPOS,0.0000,123.4567"
  * @returns {string}     两位大写十六进制，例如 "9D"
  */
-function calcChecksum(body) {
+function calcChecksum(body: string): string {
   let xor = 0;
   for (let i = 0; i < body.length; i++) {
     xor ^= body.charCodeAt(i);
@@ -188,7 +212,7 @@ function calcChecksum(body) {
  * @param {number} [decimals=4]
  * @returns {string}
  */
-function fmtNum(val, decimals = 4) {
+function fmtNum(val: number, decimals = 4): string {
   return Number(val).toFixed(decimals);
 }
 
@@ -201,7 +225,7 @@ function fmtNum(val, decimals = 4) {
  * @param {...string} params  命令参数列表（已格式化为字符串）
  * @returns {string}  完整报文，例如 "$MNPOS,0.0000,123.4567*9D\r\n"
  */
-export function buildTurntableFrame(cmd, ...params) {
+export function buildTurntableFrame(cmd: string, ...params: string[]): string {
   const body = "MN" + cmd + (params.length > 0 ? "," + params.join(",") : "");
   const checksum = calcChecksum(body);
   return "$" + body + "*" + checksum + "\r\n";
@@ -215,7 +239,7 @@ export function buildTurntableFrame(cmd, ...params) {
  * @param {...string} params
  * @returns {boolean}  wsClient.sendText 的返回值
  */
-export function sendTurntableCmd(cmd, ...params) {
+export function sendTurntableCmd(cmd: string, ...params: string[]): boolean {
   const frame = buildTurntableFrame(cmd, ...params);
   console.log("[Turntable] 发送:", frame.replace(/\r\n$/, "\\r\\n"));
   // 将字符串转为字节数组（ASCII 范围内与 UTF-8 相同）
@@ -230,32 +254,32 @@ export function sendTurntableCmd(cmd, ...params) {
 // ----------------------------------------------------------------
 
 /** (1) 通讯检查 */
-export function tt_check() {
+export function tt_check(): boolean {
   return sendTurntableCmd("CHK", "1");
 }
 
 /** (2) 进入远控模式 */
-export function tt_remote() {
+export function tt_remote(): boolean {
   return sendTurntableCmd("REM", "1");
 }
 
 /** (3) 返回本控模式 */
-export function tt_local() {
+export function tt_local(): boolean {
   return sendTurntableCmd("LOC", "1");
 }
 
 /** (4) 使能 */
-export function tt_enable() {
+export function tt_enable(): boolean {
   return sendTurntableCmd("ENB", "1");
 }
 
 /** (5) 断开使能 */
-export function tt_disable() {
+export function tt_disable(): boolean {
   return sendTurntableCmd("DIS", "1");
 }
 
 /** (6) 寻零 */
-export function tt_homing() {
+export function tt_homing(): boolean {
   return sendTurntableCmd("HMZ", "1");
 }
 
@@ -264,7 +288,7 @@ export function tt_homing() {
  * @param {0|1|2} inner  内环模式：0=位置, 1=速率, 2=角振动
  * @param {0|1|2} outer  外环模式：0=位置, 1=速率, 2=角振动
  */
-export function tt_setMode(inner, outer) {
+export function tt_setMode(inner: number, outer: number): boolean {
   return sendTurntableCmd("MOD", String(inner), String(outer));
 }
 
@@ -273,7 +297,7 @@ export function tt_setMode(inner, outer) {
  * @param {number} inner  内环目标位置 (°)，保留4位小数
  * @param {number} outer  外环目标位置 (°)，保留4位小数
  */
-export function tt_setPos(inner, outer) {
+export function tt_setPos(inner: number, outer: number): boolean {
   return sendTurntableCmd("POS", fmtNum(inner), fmtNum(outer));
 }
 
@@ -282,7 +306,7 @@ export function tt_setPos(inner, outer) {
  * @param {number} inner  内环目标速率 (°/s)，可为负值
  * @param {number} outer  外环目标速率 (°/s)，可为负值
  */
-export function tt_setVel(inner, outer) {
+export function tt_setVel(inner: number, outer: number): boolean {
   return sendTurntableCmd("VEL", fmtNum(inner), fmtNum(outer));
 }
 
@@ -291,7 +315,7 @@ export function tt_setVel(inner, outer) {
  * @param {number} inner  内环加速度 (°/s²)
  * @param {number} outer  外环加速度 (°/s²)
  */
-export function tt_setAcc(inner, outer) {
+export function tt_setAcc(inner: number, outer: number): boolean {
   return sendTurntableCmd("ACC", fmtNum(Math.abs(inner)), fmtNum(Math.abs(outer)));
 }
 
@@ -300,7 +324,7 @@ export function tt_setAcc(inner, outer) {
  * @param {number} inner  内环幅值 (°)
  * @param {number} outer  外环幅值 (°)
  */
-export function tt_setAmp(inner, outer) {
+export function tt_setAmp(inner: number, outer: number): boolean {
   return sendTurntableCmd("AMP", fmtNum(Math.abs(inner)), fmtNum(Math.abs(outer)));
 }
 
@@ -309,27 +333,27 @@ export function tt_setAmp(inner, outer) {
  * @param {number} inner  内环频率 (Hz)
  * @param {number} outer  外环频率 (Hz)
  */
-export function tt_setFre(inner, outer) {
+export function tt_setFre(inner: number, outer: number): boolean {
   return sendTurntableCmd("FRE", fmtNum(Math.abs(inner)), fmtNum(Math.abs(outer)));
 }
 
 /** (13) 启动 */
-export function tt_run() {
+export function tt_run(): boolean {
   return sendTurntableCmd("RUN", "1");
 }
 
 /** (14) 停止 */
-export function tt_stop() {
+export function tt_stop(): boolean {
   return sendTurntableCmd("STP", "1");
 }
 
 /** (15) 状态查询 */
-export function tt_queryStatus() {
+export function tt_queryStatus(): boolean {
   return sendTurntableCmd("STS", "1");
 }
 
 /** (16) 退出 */
-export function tt_exit() {
+export function tt_exit(): boolean {
   return sendTurntableCmd("EXT", "1");
 }
 
@@ -337,27 +361,27 @@ export function tt_exit() {
  * (17) 设定温箱温度
  * @param {number} temp  目标温度 (℃)，保留1位小数，如 50.0
  */
-export function tt_setChamberTemp(temp) {
+export function tt_setChamberTemp(temp: number): boolean {
   return sendTurntableCmd("CEM", fmtNum(temp, 1));
 }
 
 /** (18) 置入设定的温度 */
-export function tt_applyChamberTemp() {
+export function tt_applyChamberTemp(): boolean {
   return sendTurntableCmd("CRN", "1");
 }
 
 /** (19) 温箱启动 */
-export function tt_chamberStart() {
+export function tt_chamberStart(): boolean {
   return sendTurntableCmd("CEN", "1");
 }
 
 /** (20) 温箱关闭 */
-export function tt_chamberStop() {
+export function tt_chamberStop(): boolean {
   return sendTurntableCmd("CST", "1");
 }
 
 /** (21) 读取当前温度值 */
-export function tt_readChamberTemp() {
+export function tt_readChamberTemp(): boolean {
   return sendTurntableCmd("CRT", "1");
 }
 
@@ -369,7 +393,7 @@ export function tt_readChamberTemp() {
  *
  * @param {string} frame  完整的应答帧字符串
  */
-export function parseTurntableStatusFrame(frame) {
+export function parseTurntableStatusFrame(frame: string): void {
   // 取 $ 和 * 之间的内容，去掉 "ASSTS," 前缀
   const match = frame.match(/\$ASSTS,([^*]+)\*/);
   if (!match) return;
@@ -379,7 +403,7 @@ export function parseTurntableStatusFrame(frame) {
 
   const [p1, v1, x, p2, v2, y] = parts;
 
-  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val ?? "--"; };
+  const set = (id: string, val: string | undefined) => { const el = document.getElementById(id); if (el) el.textContent = val ?? "--"; };
 
   set("tt_td_inner_pos",   p1);
   set("tt_td_inner_vel",   v1);
@@ -389,7 +413,7 @@ export function parseTurntableStatusFrame(frame) {
   set("tt_td_outer_state", y);
 
   // 解析状态字位（11位）
-  const parseStateBits = (hexStr, prefix) => {
+  const parseStateBits = (hexStr: string, prefix: string) => {
     const val = parseInt(hexStr, 16) || 0;
     const names = ["b0","b1","b2","b3","b4","b5","b6","b7","b8","b9","b10"];
     names.forEach((name, i) => {
@@ -411,7 +435,7 @@ export function parseTurntableStatusFrame(frame) {
  *
  * @param {string} frame
  */
-export function parseTurntableTempFrame(frame) {
+export function parseTurntableTempFrame(frame: string): void {
   const match = frame.match(/\$ASCRT,([^,*]+)/);
   if (!match) return;
   const el = document.getElementById("tt_span_chamber_temp_display");
@@ -423,7 +447,7 @@ export function parseTurntableTempFrame(frame) {
  *
  * @param {string} line
  */
-export function appendTurntableLog(line) {
+export function appendTurntableLog(line: string): void {
   const el = document.getElementById("tt_log");
   if (!el) return;
   const p = document.createElement("div");
@@ -438,8 +462,8 @@ export function appendTurntableLog(line) {
  * 绑定转台控制 Tab（tab-18）内所有按钮的点击事件。
  * 在页面加载后调用一次。
  */
-export function initTurntableUI() {
-  const bind = (id, fn) => {
+export function initTurntableUI(): void {
+  const bind = (id: string, fn: () => void) => {
     const el = document.getElementById(id);
     if (el) el.addEventListener("click", fn);
   };
@@ -458,49 +482,49 @@ export function initTurntableUI() {
 
   // 运行模式
   bind("tt_btn_set_mode", () => {
-    const inner = parseInt(document.getElementById("tt_select_inner_mode")?.value ?? "0");
-    const outer = parseInt(document.getElementById("tt_select_outer_mode")?.value ?? "0");
+    const inner = parseInt((document.getElementById("tt_select_inner_mode") as HTMLSelectElement)?.value ?? "0");
+    const outer = parseInt((document.getElementById("tt_select_outer_mode") as HTMLSelectElement)?.value ?? "0");
     tt_setMode(inner, outer);
   });
 
   // 位置设置
   bind("tt_btn_set_pos", () => {
-    const inner = parseFloat(document.getElementById("tt_input_inner_pos")?.value ?? "0");
-    const outer = parseFloat(document.getElementById("tt_input_outer_pos")?.value ?? "0");
+    const inner = parseFloat((document.getElementById("tt_input_inner_pos") as HTMLInputElement)?.value ?? "0");
+    const outer = parseFloat((document.getElementById("tt_input_outer_pos") as HTMLInputElement)?.value ?? "0");
     tt_setPos(inner, outer);
   });
 
   // 速率设置
   bind("tt_btn_set_vel", () => {
-    const inner = parseFloat(document.getElementById("tt_input_inner_vel")?.value ?? "0");
-    const outer = parseFloat(document.getElementById("tt_input_outer_vel")?.value ?? "0");
+    const inner = parseFloat((document.getElementById("tt_input_inner_vel") as HTMLInputElement)?.value ?? "0");
+    const outer = parseFloat((document.getElementById("tt_input_outer_vel") as HTMLInputElement)?.value ?? "0");
     tt_setVel(inner, outer);
   });
 
   // 加速度设置
   bind("tt_btn_set_acc", () => {
-    const inner = parseFloat(document.getElementById("tt_input_inner_acc")?.value ?? "10");
-    const outer = parseFloat(document.getElementById("tt_input_outer_acc")?.value ?? "10");
+    const inner = parseFloat((document.getElementById("tt_input_inner_acc") as HTMLInputElement)?.value ?? "10");
+    const outer = parseFloat((document.getElementById("tt_input_outer_acc") as HTMLInputElement)?.value ?? "10");
     tt_setAcc(inner, outer);
   });
 
   // 幅值设置
   bind("tt_btn_set_amp", () => {
-    const inner = parseFloat(document.getElementById("tt_input_inner_amp")?.value ?? "1");
-    const outer = parseFloat(document.getElementById("tt_input_outer_amp")?.value ?? "1");
+    const inner = parseFloat((document.getElementById("tt_input_inner_amp") as HTMLInputElement)?.value ?? "1");
+    const outer = parseFloat((document.getElementById("tt_input_outer_amp") as HTMLInputElement)?.value ?? "1");
     tt_setAmp(inner, outer);
   });
 
   // 频率设置
   bind("tt_btn_set_fre", () => {
-    const inner = parseFloat(document.getElementById("tt_input_inner_fre")?.value ?? "1");
-    const outer = parseFloat(document.getElementById("tt_input_outer_fre")?.value ?? "1");
+    const inner = parseFloat((document.getElementById("tt_input_inner_fre") as HTMLInputElement)?.value ?? "1");
+    const outer = parseFloat((document.getElementById("tt_input_outer_fre") as HTMLInputElement)?.value ?? "1");
     tt_setFre(inner, outer);
   });
 
   // 温箱控制
   bind("tt_btn_set_chamber_temp",   () => {
-    const temp = parseFloat(document.getElementById("tt_input_chamber_temp")?.value ?? "50");
+    const temp = parseFloat((document.getElementById("tt_input_chamber_temp") as HTMLInputElement)?.value ?? "50");
     tt_setChamberTemp(temp);
   });
   bind("tt_btn_apply_chamber_temp", () => tt_applyChamberTemp());
@@ -511,7 +535,7 @@ export function initTurntableUI() {
   // ---- 订阅服务端转发的转台上行帧 ----
   // server.js 广播 { type:"turntable_reply", text:"$AS..." }
   // wsClient 的 on() 按 JSON type 字段分发
-  wsClient.on("turntable_reply", (msg) => {
+  wsClient.on("turntable_reply", (msg: { text?: string }) => {
     const text = msg.text ?? "";
     if (!text) return;
 
@@ -546,7 +570,7 @@ export function initTurntableUI() {
 
   // ---- 串口配置：连接按钮 ----
   bind("tt_btn_connect_serial", () => {
-    const portInput = document.getElementById("tt_input_serial_port");
+    const portInput = document.getElementById("tt_input_serial_port") as HTMLInputElement;
     const statusEl  = document.getElementById("tt_serial_status");
     const port = (portInput?.value ?? "").trim().toUpperCase();
     if (!port) {
@@ -558,18 +582,18 @@ export function initTurntableUI() {
   });
 
   // ---- 订阅服务端串口状态消息 ----
-  wsClient.on("turntable_serial_ready", (msg) => {
+  wsClient.on("turntable_serial_ready", (msg: { port?: string }) => {
     const statusEl = document.getElementById("tt_serial_status");
     if (statusEl) {
       statusEl.textContent = `✅ 已连接 ${msg.port ?? ""}`;
       statusEl.style.color = "#4c4";
     }
     // 同步输入框显示
-    const portInput = document.getElementById("tt_input_serial_port");
+    const portInput = document.getElementById("tt_input_serial_port") as HTMLInputElement;
     if (portInput && msg.port) portInput.value = msg.port;
   });
 
-  wsClient.on("turntable_serial_error", (msg) => {
+  wsClient.on("turntable_serial_error", (msg: { message?: string }) => {
     const statusEl = document.getElementById("tt_serial_status");
     if (statusEl) {
       statusEl.textContent = `❌ ${msg.message ?? "串口错误"}`;
@@ -601,9 +625,9 @@ export function initTurntableUI() {
   }
 
   // ---- Excel 位置序列扫描按钮 ----
-  const excelBtnOpen  = document.getElementById("excel_scan_btn_open");
-  const excelBtnStart = document.getElementById("excel_scan_btn_start");
-  const excelBtnStop  = document.getElementById("excel_scan_btn_stop");
+  const excelBtnOpen  = document.getElementById("excel_scan_btn_open") as HTMLButtonElement;
+  const excelBtnStart = document.getElementById("excel_scan_btn_start") as HTMLButtonElement;
+  const excelBtnStop  = document.getElementById("excel_scan_btn_stop") as HTMLButtonElement;
 
   if (excelBtnOpen) {
     excelBtnOpen.addEventListener("click", async () => {
@@ -653,10 +677,10 @@ let _calScanAbort = false;
  * 到位检测回调：每次收到 $ASSTS 帧时调用，传入 { innerMoving, outerMoving }。
  * 由 waitForTurntableArrive() 注册，到位后自行清除。
  */
-let _arriveCallback = null;
+let _arriveCallback: ((payload: { innerMoving: boolean; outerMoving: boolean }) => void) | null = null;
 
 /** 最近一次 $ASSTS 解析出的实际位置，{ az: number, el: number } */
-let _lastActualPos = null;
+let _lastActualPos: { az: number; el: number } | null = null;
 
 /**
  * 发送一次状态查询，等待 $ASSTS 回复，返回实际位置 { az, el }。
@@ -665,11 +689,11 @@ let _lastActualPos = null;
  * @param {number} [timeoutMs=2000]
  * @returns {Promise<{az:number, el:number}|null>}
  */
-function queryActualPos(timeoutMs = 2000) {
-  return new Promise((resolve) => {
+function queryActualPos(timeoutMs = 2000): Promise<{ az: number; el: number } | null> {
+  return new Promise<{ az: number; el: number } | null>((resolve) => {
     let settled = false;
-    let poll;
-    const done = (result) => {
+    let poll: ReturnType<typeof setInterval>;
+    const done = (result: { az: number; el: number } | null) => {
       if (settled) return;
       settled = true;
       clearInterval(poll);   // 无论超时还是正常返回，都清除轮询
@@ -699,10 +723,10 @@ function queryActualPos(timeoutMs = 2000) {
  * @param {number} [pollMs=200]  状态查询间隔（ms）
  * @returns {Promise<boolean>}  true=正常到位，false=超时强制继续
  */
-function waitForTurntableArrive(timeoutMs, pollMs = 200) {
-  return new Promise((resolve) => {
+function waitForTurntableArrive(timeoutMs: number, pollMs = 200): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
     let settled = false;
-    const done = (result) => {
+    const done = (result: boolean) => {
       if (settled) return;
       settled = true;
       _arriveCallback = null;
@@ -736,26 +760,26 @@ function waitForTurntableArrive(timeoutMs, pollMs = 200) {
  * 3. 启动 F000H 采集，收集 N 帧 B 帧，提取 KFJ_FWJ / KFJ_FYJ 的平均值
  * 4. 全部完成后保存两张表到 txt
  */
-export async function runCalibrationScan() {
+export async function runCalibrationScan(): Promise<void> {
   // ---------- 读取 UI 参数 ----------
-  const startAz  = parseFloat(document.getElementById("cal_start_az")?.value ?? "0");
-  const startEl  = parseFloat(document.getElementById("cal_start_el")?.value ?? "0");
-  const endAz    = parseFloat(document.getElementById("cal_end_az")?.value   ?? "10");
-  const endEl    = parseFloat(document.getElementById("cal_end_el")?.value   ?? "0");
-  const stepAz   = Math.abs(parseFloat(document.getElementById("cal_step_az")?.value ?? "1")) || 1;
-  const stepEl   = Math.abs(parseFloat(document.getElementById("cal_step_el")?.value ?? "1")) || 1;
-  const frames   = Math.max(0, parseInt(document.getElementById("cal_frames")?.value ?? "100"));
-  const waitMs   = Math.max(100, parseInt(document.getElementById("cal_wait_ms")?.value ?? "2000"));
+  const startAz  = parseFloat((document.getElementById("cal_start_az") as HTMLInputElement)?.value ?? "0");
+  const startEl  = parseFloat((document.getElementById("cal_start_el") as HTMLInputElement)?.value ?? "0");
+  const endAz    = parseFloat((document.getElementById("cal_end_az") as HTMLInputElement)?.value   ?? "10");
+  const endEl    = parseFloat((document.getElementById("cal_end_el") as HTMLInputElement)?.value   ?? "0");
+  const stepAz   = Math.abs(parseFloat((document.getElementById("cal_step_az") as HTMLInputElement)?.value ?? "1")) || 1;
+  const stepEl   = Math.abs(parseFloat((document.getElementById("cal_step_el") as HTMLInputElement)?.value ?? "1")) || 1;
+  const frames   = Math.max(0, parseInt((document.getElementById("cal_frames") as HTMLInputElement)?.value ?? "100"));
+  const waitMs   = Math.max(100, parseInt((document.getElementById("cal_wait_ms") as HTMLInputElement)?.value ?? "2000"));
 
   const calStatus  = document.getElementById("cal_status");
   const calLog     = document.getElementById("cal_log");
-  const calBtnStart = document.getElementById("cal_btn_start");
-  const calBtnStop  = document.getElementById("cal_btn_stop");
+  const calBtnStart = document.getElementById("cal_btn_start") as HTMLButtonElement;
+  const calBtnStop  = document.getElementById("cal_btn_stop") as HTMLButtonElement;
 
-  const setStatus = (msg, color = "#e0e0e0") => {
+  const setStatus = (msg: string, color = "#e0e0e0") => {
     if (calStatus) { calStatus.textContent = msg; calStatus.style.color = color; }
   };
-  const log = (msg) => {
+  const log = (msg: string) => {
     if (calLog) {
       calLog.textContent += msg + "\n";
       calLog.scrollTop = calLog.scrollHeight;
@@ -796,10 +820,10 @@ export async function runCalibrationScan() {
   }
 
   // 实际发送给转台的当前位置（从 $ASSTS 读取后累加间隔）
-  let actualAz = null;
-  let actualEl = null;
+  let actualAz: number | null = null;
+  let actualEl: number | null = null;
   // 每行行首的实际方位（初始点查询后记录，俯仰换行时用于方位回退）
-  let rowStartActualAz = null;
+  let rowStartActualAz: number | null = null;
 
   try {
     for (let ei = 0; ei <= elSteps; ei++) {
@@ -845,12 +869,12 @@ export async function runCalibrationScan() {
           if (ai === 0) {
             // 俯仰换行：方位回到行首（初始点查到的实际方位），俯仰步进一格
             actualAz = rowStartActualAz;
-            actualEl = +(actualEl + stepEl).toFixed(6);
-            if (actualEl > 140) actualEl = +(actualEl - 360).toFixed(6);
+            actualEl = +((actualEl as number) + stepEl).toFixed(6);
+            if (actualEl > 140) actualEl = +((actualEl as number) - 360).toFixed(6);
           } else {
             // 方位步进一格（步长含方向），大于 140° 则折叠
-            actualAz = +(actualAz + stepAz).toFixed(6);
-            if (actualAz > 140) actualAz = +(actualAz - 360).toFixed(6);
+            actualAz = +((actualAz as number) + stepAz).toFixed(6);
+            if (actualAz > 140) actualAz = +((actualAz as number) - 360).toFixed(6);
           }
 
           setStatus(`扫描中 ${pointIdx}/${totalPoints}  az=${actualAz}° el=${actualEl}°`, "#7ec8f0");
@@ -858,7 +882,7 @@ export async function runCalibrationScan() {
           log(`  → txt 记录位置：方位=${txtAz}°  俯仰=${txtEl}°`);
 
           // 发送位置指令并启动
-          tt_setPos(actualAz, actualEl);
+          tt_setPos(actualAz!, actualEl!);
           tt_run();
           log(`  → 已发送位置指令并启动，等待到位（超时 ${waitMs} ms）…`);
 
@@ -888,8 +912,8 @@ export async function runCalibrationScan() {
           let sumFwj = 0;
           let sumFyj = 0;
 
-          await new Promise((resolve, reject) => {
-            setBFrameRawCallback((data) => {
+          await new Promise<void>((resolve, reject) => {
+            setBFrameRawCallback((data: Uint8Array) => {
               if (_calScanAbort) {
                 setBFrameRawCallback(null);
                 reject(new Error("abort"));
@@ -986,8 +1010,8 @@ export async function runCalibrationScan() {
  * @param {string} fieldName  表格第 0 列中的参数名称，如 "快反镜方位角"
  * @returns {number|null}  解析出的数值；未找到或解析失败返回 null
  */
-export function readBFrameTableValue(fieldName) {
-  const table = document.getElementById("tableWidget_SJCJ_F000H_Recv");
+export function readBFrameTableValue(fieldName: string): number | null {
+  const table = document.getElementById("tableWidget_SJCJ_F000H_Recv") as HTMLTableElement | null;
   if (!table) {
     console.warn("[readBFrameTableValue] 找不到表格 tableWidget_SJCJ_F000H_Recv");
     return null;
@@ -998,7 +1022,7 @@ export function readBFrameTableValue(fieldName) {
     const label = row.cells[0].textContent.trim();
     if (label === fieldName) {
       const cell  = row.cells[1];
-      const input = cell.querySelector("input, select");
+      const input = cell.querySelector("input, select") as (HTMLInputElement | HTMLSelectElement) | null;
       const text  = input ? input.value.trim() : cell.textContent.trim();
       const val   = parseFloat(text);
       return isNaN(val) ? null : val;
@@ -1020,8 +1044,8 @@ export function readBFrameTableValue(fieldName) {
  * @returns {Promise<Array<[number,number]>|null>}
  *   解析成功返回 [[az0,el0],[az1,el1],...] ；用户取消或解析失败返回 null
  */
-export function readExcelPositions() {
-  return new Promise((resolve) => {
+export function readExcelPositions(): Promise<number[][] | null> {
+  return new Promise<number[][] | null>((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv";
@@ -1035,12 +1059,12 @@ export function readExcelPositions() {
       const fnEl = document.getElementById("excel_scan_filename");
       if (fnEl) fnEl.textContent = file.name;
 
-      const ext = file.name.split(".").pop().toLowerCase();
+      const ext = file.name.split(".").pop()?.toLowerCase();
 
       if (ext === "csv") {
         // ---- CSV 路径：文本读取 ----
         const reader = new FileReader();
-        reader.onload = (e) => resolve(_parseCsvRows(e.target.result));
+        reader.onload = (e) => resolve(_parseCsvRows(e.target?.result as string));
         reader.onerror = () => resolve(null);
         reader.readAsText(file, "utf-8");
       } else {
@@ -1048,20 +1072,23 @@ export function readExcelPositions() {
         const reader = new FileReader();
         reader.onload = (e) => {
           try {
-            const ab = e.target.result;
+            const ab = e.target?.result as ArrayBuffer;
             // 优先使用 SheetJS（若页面已通过 <script> 引入）
+            // @ts-expect-error 页面全局: XLSX 通过 <script> 引入（SheetJS），未装 @types/xlsx，无 TS 类型声明
             if (typeof XLSX !== "undefined") {
+              // @ts-expect-error 同上：XLSX 页面全局对象
               const wb = XLSX.read(ab, { type: "array" });
               const ws = wb.Sheets[wb.SheetNames[0]];
+              // @ts-expect-error 同上：XLSX.utils 页面全局对象
               const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-              resolve(_parseNumericRows(rawRows));
+              resolve(_parseNumericRows(rawRows as unknown[][]));
             } else {
               // 降级：把 ArrayBuffer 当文本尝试解析
               const text = new TextDecoder("utf-8").decode(new Uint8Array(ab));
               resolve(_parseCsvRows(text));
             }
           } catch (err) {
-            console.error("[readExcelPositions] 解析失败:", err);
+            console.error("[readExcelPositions] 解析失败:", err as Error);
             resolve(null);
           }
         };
@@ -1078,20 +1105,20 @@ export function readExcelPositions() {
 }
 
 /** 将 CSV 文本解析为 [[az, el, An, Bn], ...] */
-function _parseCsvRows(text) {
+function _parseCsvRows(text: string): number[][] | null {
   const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-  return _parseNumericRows(lines.map((l) => l.split(/[,\t]/)));
+  return _parseNumericRows(lines.map((l: string) => l.split(/[,\t]/)));
 }
 
 /** 将二维字符串/数值数组过滤出含四个有效数值的行 [az, el, An, Bn] */
-function _parseNumericRows(rawRows) {
-  const result = [];
+function _parseNumericRows(rawRows: unknown[][]): number[][] | null {
+  const result: number[][] = [];
   for (const row of rawRows) {
     if (!row || row.length < 4) continue;
-    const az = parseFloat(row[0]);
-    const el = parseFloat(row[1]);
-    const an = parseFloat(row[2]);
-    const bn = parseFloat(row[3]);
+    const az = parseFloat(String(row[0]));
+    const el = parseFloat(String(row[1]));
+    const an = parseFloat(String(row[2]));
+    const bn = parseFloat(String(row[3]));
     if (!isNaN(az) && !isNaN(el) && !isNaN(an) && !isNaN(bn))
       result.push([az, el, an, bn]);
   }
@@ -1105,19 +1132,22 @@ function _parseNumericRows(rawRows) {
  * @param {Array<{an:number, bn:number, fwj:number, fyj:number}>} results
  * @param {string} ts  时间戳字符串
  */
-function downloadExcelScanResult(results, ts) {
+function downloadExcelScanResult(
+  results: { an: number; bn: number; fwj: number; fyj: number }[],
+  ts: string,
+): void {
   const GROUP_PER_LINE = 5;
 
-  function buildTxt(valKey) {
+  function buildTxt(valKey: "fwj" | "fyj"): string {
     const entries = results.map((r) => `{${r.an},${r.bn},${r[valKey]}}`);
-    const lines = [];
+    const lines: string[] = [];
     for (let i = 0; i < entries.length; i += GROUP_PER_LINE) {
       lines.push(entries.slice(i, i + GROUP_PER_LINE).join(","));
     }
     return "{" + lines.join(",\n") + "}";
   }
 
-  function triggerDownload(content, filename) {
+  function triggerDownload(content: string, filename: string): void {
     const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
@@ -1173,24 +1203,24 @@ let _excelScanAbort = false;
  *   流程：转台到位 → 启动A帧 → 等待红外光轴系目标角度连续5帧<0.05°
  *         → 采集 frames 帧取快反镜均值 → 生成两个 txt 文件
  */
-export async function runExcelScan() {
+export async function runExcelScan(): Promise<void> {
   const STABLE_COUNT  = 5;
   const STABLE_THRESH = 0.05;
 
-  const frames  = Math.max(1, parseInt(document.getElementById("excel_scan_frames")?.value    ?? "100"));
-  const waitMs  = Math.max(100, parseInt(document.getElementById("excel_scan_wait_ms")?.value ?? "3000"));
+  const frames  = Math.max(1, parseInt((document.getElementById("excel_scan_frames") as HTMLInputElement)?.value    ?? "100"));
+  const waitMs  = Math.max(100, parseInt((document.getElementById("excel_scan_wait_ms") as HTMLInputElement)?.value ?? "3000"));
 
-  const btnOpen  = document.getElementById("excel_scan_btn_open");
-  const btnStart = document.getElementById("excel_scan_btn_start");
-  const btnStop  = document.getElementById("excel_scan_btn_stop");
+  const btnOpen  = document.getElementById("excel_scan_btn_open") as HTMLButtonElement;
+  const btnStart = document.getElementById("excel_scan_btn_start") as HTMLButtonElement;
+  const btnStop  = document.getElementById("excel_scan_btn_stop") as HTMLButtonElement;
   const statusEl = document.getElementById("excel_scan_status");
   const logEl    = document.getElementById("excel_scan_log");
 
   const LOG_MAX_LINES = 500;   // 日志超过此行数时清零，防止占用大量内存
-  const setStatus = (msg, color = "#e0e0e0") => {
+  const setStatus = (msg: string, color = "#e0e0e0") => {
     if (statusEl) { statusEl.textContent = msg; statusEl.style.color = color; }
   };
-  const log = (msg) => {
+  const log = (msg: string) => {
     if (!logEl) return;
     // 超过上限时清零，并给出提示
     const cur = (logEl.textContent.match(/\n/g) || []).length;
@@ -1276,7 +1306,7 @@ export async function runExcelScan() {
       log(`  -> 等待红外光轴系目标角度稳定（连续 ${STABLE_COUNT} 帧 < ${STABLE_THRESH} deg）...`);
       let stableCount = 0;
 
-      await new Promise((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         setBFrameRawCallback(() => {
           if (_excelScanAbort) { setBFrameRawCallback(null); reject(new Error("abort")); return; }
           const fyj = readBFrameTableValue("红外光轴系目标俯仰角");
@@ -1290,7 +1320,7 @@ export async function runExcelScan() {
             stableCount = 0;
           }
         });
-      }).catch((e) => {
+      }).catch((e: Error) => {
         if (e.message !== "abort") throw e;
         setBFrameRawCallback(null);
         _excelScanAbort = true;
@@ -1302,7 +1332,7 @@ export async function runExcelScan() {
       // 阶段2：采集 frames 帧，取快反镜方位角/俯仰角均值
       let count = 0, sumFwj = 0, sumFyj = 0, warnFwj = false, warnFyj = false;
 
-      await new Promise((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         setBFrameRawCallback(() => {
           if (_excelScanAbort) { setBFrameRawCallback(null); reject(new Error("abort")); return; }
           const vFwj = readBFrameTableValue("快反镜方位角");
@@ -1312,7 +1342,7 @@ export async function runExcelScan() {
           count++;
           if (count >= frames) { setBFrameRawCallback(null); resolve(); }
         });
-      }).catch((e) => {
+      }).catch((e: Error) => {
         if (e.message !== "abort") throw e;
         setBFrameRawCallback(null);
         _excelScanAbort = true;

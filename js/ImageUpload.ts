@@ -6,7 +6,7 @@ import PacketManager from "./BinaryTableHelper";
 import { frameStats } from "./Video";
 import { loadCommand_SJCJ_F000H, setResolveAck_F000H_SJCJ } from "./Command";
 
-let buffer = null;
+let buffer: Uint8Array | null = null;
 let sendBuffer = new Uint8Array(1040);
 let curFile = {
   fileName: "",
@@ -19,12 +19,13 @@ let curFile = {
 let isStop = true;
 let isSending = false;
 
-let resolveAck = null;
-let resolveSJCJ = null; // 新增：等待 SJCJ 1000H 应答
+let resolveAck: (() => void) | null = null;
+let resolveSJCJ: (() => void) | null = null; // 新增：等待 SJCJ 1000H 应答
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
-export const initializeUploadImage = () => {
+export const initializeUploadImage = (): void => {
   // 注册图像上传应答处理函数到专用 WS 客户端
   setOnHandshakeAck((data) => handle_ImageUpload_0B00H(data));
   setOnPerFrameAck((data) => handle_ImageUpload_Per_Frame_0B00H(data));
@@ -38,16 +39,16 @@ export const initializeUploadImage = () => {
   const resetFrameBtn = document.getElementById("reset-imageupload-btn");
   const beginFrameInput = document.getElementById(
     "input-imageupload-begin-frame",
-  );
-  resetFrameBtn.addEventListener("click", () => {
+  ) as HTMLInputElement | null;
+  resetFrameBtn?.addEventListener("click", () => {
     if (!isStop) {
-      statusBar.sendMessage("请先暂停发送后再重置帧", "0B00H", "error");
+      statusBar.sendMessage("请先暂停发送后再重置帧", "0B00H");
       return;
     }
 
     // 使用begin-frame输入框的值
-    const inputValue = beginFrameInput.value.trim();
-    let newFrameValue;
+    const inputValue = beginFrameInput?.value.trim() ?? "";
+    let newFrameValue: number;
 
     if (inputValue === "") {
       // 如果输入框为空，重置为0
@@ -56,7 +57,7 @@ export const initializeUploadImage = () => {
       // 否则使用用户输入的值
       newFrameValue = parseInt(inputValue, 10);
       if (isNaN(newFrameValue) || newFrameValue < 0) {
-        statusBar.sendMessage("请输入有效的帧数值（>=0）", "0B00H", "error");
+        statusBar.sendMessage("请输入有效的帧数值（>=0）", "0B00H");
         return;
       }
     }
@@ -71,15 +72,14 @@ export const initializeUploadImage = () => {
     statusBar.sendMessage(
       `帧已重置为 ${newFrameValue}`,
       "0B00H",
-      `下次发送将从第${newFrameValue}帧开始`,
     );
   });
 
   // 单帧发送功能
   const singleFrameSendBtn = document.getElementById("single-frame-send-btn");
-  singleFrameSendBtn.addEventListener("click", async () => {
+  singleFrameSendBtn?.addEventListener("click", async () => {
     if (!isStop) {
-      statusBar.sendMessage("请先暂停发送后再使用单帧发送", "0B00H", "error");
+      statusBar.sendMessage("请先暂停发送后再使用单帧发送", "0B00H");
       return;
     }
 
@@ -94,7 +94,6 @@ export const initializeUploadImage = () => {
         statusBar.sendMessage(
           "帧索引超出范围，已到达最后一帧",
           "0B00H",
-          "error",
         );
         return;
       }
@@ -120,7 +119,7 @@ export const initializeUploadImage = () => {
     );
   });
 
-  handshakeImageuploadBtn.addEventListener("click", () => {
+  handshakeImageuploadBtn?.addEventListener("click", () => {
     sendBuffer[0] = 0x31;
     sendBuffer[1] = 0x02;
     sendBuffer[2] = 0x01;
@@ -155,17 +154,19 @@ export const initializeUploadImage = () => {
       );
   });
 
-  imageUploadBtn.addEventListener("click", () => {
+  imageUploadBtn?.addEventListener("click", () => {
     //let view = new DataView(sendbuffer.buffer);
 
     const input = document.createElement("input");
     input.type = "file";
     input.onchange = (e) => {
-      const file = e.target.files[0];
+      const target = e.target as HTMLInputElement;
+      const file = target.files?.[0];
       if (file) {
         const reader = new FileReader();
         reader.onload = function (event) {
-          const arrayBuffer = event.target.result;
+          const target = event.target as FileReader;
+          const arrayBuffer = target.result as ArrayBuffer;
           buffer = new Uint8Array(arrayBuffer);
           curFile.fileName = file.name;
           curFile.fileSize = buffer.length;
@@ -204,9 +205,14 @@ export const initializeUploadImage = () => {
           } else {
             console.log("只有一帧数据（第一帧即最后一帧）");
           }*/
-          document.getElementById("input-imageupload-begin-frame").value = 0;
-          document.getElementById("input-imageupload-end-frame").value =
-            curFile.endFrame;
+          const beginFrameInputEl = document.getElementById(
+            "input-imageupload-begin-frame",
+          ) as HTMLInputElement | null;
+          if (beginFrameInputEl) beginFrameInputEl.value = String(0);
+          const endFrameInputEl = document.getElementById(
+            "input-imageupload-end-frame",
+          ) as HTMLInputElement | null;
+          if (endFrameInputEl) endFrameInputEl.value = String(curFile.endFrame);
           const spanImageuploadFrameRage = document.getElementById(
             "span-imageupload-frame-range",
           );
@@ -222,21 +228,21 @@ export const initializeUploadImage = () => {
 
   const inputImageuploadBeginFrame = document.getElementById(
     "input-imageupload-begin-frame",
-  );
+  ) as HTMLInputElement | null;
   const inputImageuploadEndFrame = document.getElementById(
     "input-imageupload-end-frame",
-  );
-  inputImageuploadBeginFrame.addEventListener("input", () => {
+  ) as HTMLInputElement | null;
+  inputImageuploadBeginFrame?.addEventListener("input", () => {
     curFile.beginFrame = parseInt(inputImageuploadBeginFrame.value) || 0;
     if (isStop) {
       curFile.curFrame = curFile.beginFrame;
     }
   });
-  inputImageuploadEndFrame.addEventListener("input", () => {
+  inputImageuploadEndFrame?.addEventListener("input", () => {
     curFile.endFrame = parseInt(inputImageuploadEndFrame.value) || 0;
   });
   const startImageuploadBtn = document.getElementById("start-imageupload-btn");
-  startImageuploadBtn.addEventListener("click", () => {
+  startImageuploadBtn?.addEventListener("click", () => {
     if (!isStop) return;
     isStop = false;
     if (
@@ -248,7 +254,7 @@ export const initializeUploadImage = () => {
     loadCommand_ImageUpload();
   });
   const stopImageuploadBtn = document.getElementById("stop-imageupload-btn");
-  stopImageuploadBtn.addEventListener("click", () => {
+  stopImageuploadBtn?.addEventListener("click", () => {
     isStop = true;
     if (resolveAck) {
       resolveAck();
@@ -261,16 +267,15 @@ export const initializeUploadImage = () => {
     statusBar.sendMessage(
       "已停止图像发送",
       "0B00H",
-      "当前待发送帧索引：" + curFile.curFrame,
     );
-    startImageuploadBtn.innerText = "继续发送";
+    if (startImageuploadBtn) startImageuploadBtn.innerText = "继续发送";
   });
 };
 
 /**
  * 图像上传命令-握手应答
  */
-export const handle_ImageUpload_0B00H = (data) => {
+export const handle_ImageUpload_0B00H = (data: Uint8Array): void => {
   console.log("收到图像上传握手应答");
   if (data.length < 8) {
     console.warn("图像上传握手应答数据长度不足");
@@ -287,14 +292,17 @@ export const handle_ImageUpload_0B00H = (data) => {
 
 //限制到每秒发10帧图
 //TODO:选择要发的帧范围（x-y)  暂停功能
-const loadCommand_ImageUpload = async () => {
+const loadCommand_ImageUpload = async (): Promise<void> => {
   // 重置统计
   frameStats.reset();
+
+  // 未加载文件时直接返回（与 sendSingleFrame 保持一致）
+  if (!buffer) return;
+  const buf: Uint8Array = buffer;
 
   statusBar.sendMessage(
     "开始发送图像数据...",
     "0B00H",
-    `当前进度: 第${curFile.curFrame}帧 / 目标: 第${curFile.endFrame}帧`,
   );
   const buildFrame = () => {
     sendBuffer[0] = 0x31;
@@ -336,7 +344,7 @@ const loadCommand_ImageUpload = async () => {
     }
     //计算当前帧数据位置
     let frameStart = curFile.curFrame * 32768;
-    if (frameStart >= buffer.length) break;
+    if (frameStart >= buf.length) break;
     let frameEnd = Math.min(frameStart + 32768, curFile.fileSize);
     let packetCount = 0;
     let currentPos = frameStart;
@@ -360,7 +368,7 @@ const loadCommand_ImageUpload = async () => {
       }
       sendBuffer[18] = packetCount & 0xff;
       sendBuffer[19] = (packetCount >> 8) & 0xff;
-        sendBuffer.set(buffer.slice(currentPos, currentPos + chunkSize), 24);
+        sendBuffer.set(buf.slice(currentPos, currentPos + chunkSize), 24);
 
         //const sendTime = performance.now();
         //console.log("发送时刻：", sendTime.toFixed(3));
@@ -369,7 +377,7 @@ const loadCommand_ImageUpload = async () => {
         "发送图像数据包",
         "0B00H" + ` 第${curFile.curFrame}帧 第${packetCount}包`
       );*/
-      await new Promise((resolve) => {
+      await new Promise<void>((resolve) => {
         resolveAck = resolve;
       });
 
@@ -394,7 +402,8 @@ const loadCommand_ImageUpload = async () => {
   }
   isStop = true; // 重置状态
   statusBar.sendMessage("图像数据发送完毕", "0B00H");
-  document.getElementById("start-imageupload-btn").innerText = "开始发送";
+  const startBtn = document.getElementById("start-imageupload-btn");
+  if (startBtn) startBtn.innerText = "开始发送";
   curFile.curFrame = curFile.beginFrame;
 };
 
@@ -403,7 +412,7 @@ const loadCommand_ImageUpload = async () => {
 /**
  * 图像上传每包应答
  */
-export const handle_ImageUpload_Per_Frame_0B00H = async (data) => {
+export const handle_ImageUpload_Per_Frame_0B00H = async (data: Uint8Array): Promise<void> => {
   if (data[0] !== 0x40 || data[1] !== 0x06) {
     console.warn("图像上传每包应答标志位错误");
     return;
@@ -455,7 +464,7 @@ export const handle_ImageUpload_Per_Frame_0B00H = async (data) => {
   }
 };
 
-const loadCommand_SJCJ_once = async () => {
+const loadCommand_SJCJ_once = async (): Promise<void> => {
   sendBuffer[0] = 0x31;
   sendBuffer[1] = 0x02;
   sendBuffer[2] = 0x01;
@@ -482,33 +491,38 @@ const loadCommand_SJCJ_once = async () => {
   sendSJCJBuffer.set(sendBuffer.subarray(0, 16), 0);
 
   const helper = PacketManager.get("SJCJ_Send");
+  if (!helper) {
+    console.error("[SJCJ] SJCJ_Send helper 未初始化");
+    return;
+  }
   helper.updateAllFromTable("tableWidget_SJCJ_Send");
 
   const payload = helper.getBufferForSend();
   sendSJCJBuffer.set(payload, 16);
 
   // --- 飞行指令 (ptr[18]) ---
-  const cb_FXZL = document.getElementById("checkBox_FXZL");
+  const cb_FXZL = document.getElementById("checkBox_FXZL") as HTMLInputElement | null;
   sendSJCJBuffer[18] = cb_FXZL?.checked ? 0xff : 0x00;
 
   // --- 跟踪工作模式 (ptr[19]) ---
   let g_GZMS = 0x00;
-  if (document.getElementById("radioButton_initial_state")?.checked)
+  if ((document.getElementById("radioButton_initial_state") as HTMLInputElement | null)?.checked)
     g_GZMS = 0x00;
-  if (document.getElementById("radioButton_GZYZ")?.checked) g_GZMS = 0x11;
-  if (document.getElementById("radioButton_HWYXJH")?.checked) g_GZMS = 0x21;
-  if (document.getElementById("radioButton_JGYXJH")?.checked) g_GZMS = 0x22;
-  if (document.getElementById("radioButton_HWYDJH")?.checked) g_GZMS = 0x23;
-  if (document.getElementById("radioButton_JGYDJH")?.checked) g_GZMS = 0x24;
-  if (document.getElementById("radioButton_FHJH")?.checked) g_GZMS = 0x25;
-  if (document.getElementById("radioButton_MBSS")?.checked) g_GZMS = 0x12;
+  if ((document.getElementById("radioButton_GZYZ") as HTMLInputElement | null)?.checked) g_GZMS = 0x11;
+  if ((document.getElementById("radioButton_HWYXJH") as HTMLInputElement | null)?.checked) g_GZMS = 0x21;
+  if ((document.getElementById("radioButton_JGYXJH") as HTMLInputElement | null)?.checked) g_GZMS = 0x22;
+  if ((document.getElementById("radioButton_HWYDJH") as HTMLInputElement | null)?.checked) g_GZMS = 0x23;
+  if ((document.getElementById("radioButton_JGYDJH") as HTMLInputElement | null)?.checked) g_GZMS = 0x24;
+  if ((document.getElementById("radioButton_FHJH") as HTMLInputElement | null)?.checked) g_GZMS = 0x25;
+  if ((document.getElementById("radioButton_MBSS") as HTMLInputElement | null)?.checked) g_GZMS = 0x12;
   sendSJCJBuffer[19] = g_GZMS;
 
   // --- 导引头抗干扰信息 (ptr[106], ptr[107]) ---
   let g_DYTKGRD = 0;
 
   // 辅助函数：获取下拉框索引
-  const getComboIndex = (id) => document.getElementById(id)?.selectedIndex ?? 0;
+  const getComboIndex = (id: string): number =>
+    (document.getElementById(id) as HTMLSelectElement | null)?.selectedIndex ?? 0;
 
   // bit 0-1
   let temp_dyt0 = getComboIndex("comboBox_DYTKGRD01");
@@ -547,7 +561,7 @@ const loadCommand_SJCJ_once = async () => {
 
   // --- 积分时间控制 (ptr[110]) ---
   // C++: tempIndex + 1 = 110
-  if (document.getElementById("checkBox_JFSJKZD7")?.checked) {
+  if ((document.getElementById("checkBox_JFSJKZD7") as HTMLInputElement | null)?.checked) {
     const jfsjIndex = getComboIndex("comboBox_JFSJKZ");
     const jfsjMap = [0x81, 0x82, 0x84, 0x88, 0x90, 0xa0, 0xc0];
     sendSJCJBuffer[110] = jfsjMap[jfsjIndex] || 0x00;
@@ -557,10 +571,10 @@ const loadCommand_SJCJ_once = async () => {
 
   // --- 激光位控 (ptr[116]) ---
   let g_JGWK = 0;
-  if (document.getElementById("radioButton_FSJSBKQ")?.checked) g_JGWK = 0x00;
-  if (document.getElementById("radioButton_JGFS")?.checked) g_JGWK = 0x11;
-  if (document.getElementById("radioButton_JGJS")?.checked) g_JGWK = 0x22;
-  if (document.getElementById("radioButton_FSJSZCKQ")?.checked) g_JGWK = 0x33;
+  if ((document.getElementById("radioButton_FSJSBKQ") as HTMLInputElement | null)?.checked) g_JGWK = 0x00;
+  if ((document.getElementById("radioButton_JGFS") as HTMLInputElement | null)?.checked) g_JGWK = 0x11;
+  if ((document.getElementById("radioButton_JGJS") as HTMLInputElement | null)?.checked) g_JGWK = 0x22;
+  if ((document.getElementById("radioButton_FSJSZCKQ") as HTMLInputElement | null)?.checked) g_JGWK = 0x33;
   sendSJCJBuffer[116] = g_JGWK;
 
   // --- 表格索引 43, 44 对应的数据 (ptr[111]..ptr[114]?) ---
@@ -571,7 +585,7 @@ const loadCommand_SJCJ_once = async () => {
 
   // --- 激光制导/红外制导有效位 (ptr[117]) ---
   // C++: checkBox_YXYB
-  sendSJCJBuffer[117] = document.getElementById("checkBox_YXYB")?.checked
+  sendSJCJBuffer[117] = (document.getElementById("checkBox_YXYB") as HTMLInputElement | null)?.checked
     ? 0x11
     : 0x00;
 
@@ -581,7 +595,7 @@ const loadCommand_SJCJ_once = async () => {
   wsClient.sendUdp(sendSJCJBuffer);
 };
 
-const loadCommand_SJCJ_F000H_once = async() => {
+const loadCommand_SJCJ_F000H_once = async (): Promise<void> => {
     sendBuffer[0] = 0x31;
     sendBuffer[1] = 0x02;
     sendBuffer[2] = 0x01;
@@ -606,7 +620,6 @@ const loadCommand_SJCJ_F000H_once = async() => {
           statusBar.sendMessage(
             "SJCJ_F000H_Send helper 未初始化",
             "F000H",
-            "error",
           );
           return;
         }
@@ -630,43 +643,43 @@ const loadCommand_SJCJ_F000H_once = async() => {
         // 位 11: 前向/后向 (1位)
         let targetStatusWord = 0;
     
-        const djlxl = document.getElementById("comboBox_DJMBLX");
+        const djlxl = document.getElementById("comboBox_DJMBLX") as HTMLSelectElement | null;
         if (djlxl) {
           const val = parseBinaryOption(djlxl.value);
           targetStatusWord |= (val & 0x7) << 0; // 位 0-2
         }
-    
-        const hwqj = document.getElementById("comboBox_HWQJBS");
+
+        const hwqj = document.getElementById("comboBox_HWQJBS") as HTMLSelectElement | null;
         if (hwqj) {
           const val = parseBinaryOption(hwqj.value);
           targetStatusWord |= (val & 0x7) << 3; // 位 3-5
         }
-    
-        const qf1 = document.getElementById("comboBox_QF1BS");
+
+        const qf1 = document.getElementById("comboBox_QF1BS") as HTMLInputElement | null;
         if (qf1) {
           const val = qf1.checked ? 1 : 0;
           targetStatusWord |= (val & 0x1) << 6; // 位 6
         }
-    
-        const qf2 = document.getElementById("comboBox_QF2BS");
+
+        const qf2 = document.getElementById("comboBox_QF2BS") as HTMLInputElement | null;
         if (qf2) {
           const val = qf2.checked ? 1 : 0;
           targetStatusWord |= (val & 0x1) << 7; // 位 7
         }
-    
-        const ych = document.getElementById("comboBox_YCHBS");
+
+        const ych = document.getElementById("comboBox_YCHBS") as HTMLInputElement | null;
         if (ych) {
           const val = ych.checked ? 1 : 0;
           targetStatusWord |= (val & 0x1) << 8; // 位 8
         }
-    
-        const mbcc = document.getElementById("comboBox_MBCCBS");
+
+        const mbcc = document.getElementById("comboBox_MBCCBS") as HTMLSelectElement | null;
         if (mbcc) {
           const val = parseBinaryOption(mbcc.value);
           targetStatusWord |= (val & 0x3) << 9; // 位 9-10
         }
-    
-        const qfhf = document.getElementById("comboBox_QFHF");
+
+        const qfhf = document.getElementById("comboBox_QFHF") as HTMLInputElement | null;
         if (qfhf) {
           const val = qfhf.checked ? 1 : 0;
           targetStatusWord |= (val & 0x1) << 11; // 位 11
@@ -690,61 +703,61 @@ const loadCommand_SJCJ_F000H_once = async() => {
         // 位 12: 分离脱落信号 (1位)
         let compositeCommandWord = 0;
     
-        const xmzl = document.getElementById("comboBox_XMZL");
+        const xmzl = document.getElementById("comboBox_XMZL") as HTMLInputElement | null;
         if (xmzl) {
           const val = xmzl.checked ? 1 : 0;
           compositeCommandWord |= (val & 0x1) << 0; // 位 0
         }
-    
-        const hxzl = document.getElementById("comboBox_HXZL");
+
+        const hxzl = document.getElementById("comboBox_HXZL") as HTMLInputElement | null;
         if (hxzl) {
           const val = hxzl.checked ? 1 : 0;
           compositeCommandWord |= (val & 0x1) << 1; // 位 1
         }
-    
-        const ldxx = document.getElementById("comboBox_LDXXYX");
+
+        const ldxx = document.getElementById("comboBox_LDXXYX") as HTMLInputElement | null;
         if (ldxx) {
           const val = ldxx.checked ? 1 : 0;
           compositeCommandWord |= (val & 0x1) << 2; // 位 2
         }
-    
-        const hwjh = document.getElementById("comboBox_HWJHKZ");
+
+        const hwjh = document.getElementById("comboBox_HWJHKZ") as HTMLInputElement | null;
         if (hwjh) {
           const val = hwjh.checked ? 1 : 0;
           compositeCommandWord |= (val & 0x1) << 3; // 位 3
         }
-    
-        const jgfs = document.getElementById("comboBox_JGFSJKZ");
+
+        const jgfs = document.getElementById("comboBox_JGFSJKZ") as HTMLSelectElement | null;
         if (jgfs) {
           const val = parseBinaryOption(jgfs.value);
           compositeCommandWord |= (val & 0x3) << 4; // 位 4-5
         }
-    
-        const sszl = document.getElementById("comboBox_SSZL");
+
+        const sszl = document.getElementById("comboBox_SSZL") as HTMLSelectElement | null;
         if (sszl) {
           const val = parseBinaryOption(sszl.value);
           compositeCommandWord |= (val & 0x7) << 6; // 位 6-8
         }
-    
-        const yzcs = document.getElementById("comboBox_YZCSZL");
+
+        const yzcs = document.getElementById("comboBox_YZCSZL") as HTMLInputElement | null;
         if (yzcs) {
           const val = yzcs.checked ? 1 : 0;
           compositeCommandWord |= (val & 0x1) << 9; // 位 9
         }
-    
-        const ycyx = document.getElementById("comboBox_YCYXZL");
+
+        const ycyx = document.getElementById("comboBox_YCYXZL") as HTMLInputElement | null;
         if (ycyx) {
           const val = ycyx.checked ? 1 : 0;
           compositeCommandWord |= (val & 0x1) << 10; // 位 10
         }
-    
-        const yxsc = document.getElementById("comboBox_YXSCYBXHZL");
+
+        const yxsc = document.getElementById("comboBox_YXSCYBXHZL") as HTMLInputElement | null;
         if (yxsc) {
           const val = yxsc.checked ? 1 : 0;
           compositeCommandWord |= (val & 0x1) << 11; // 位 11
         }
-    
-        const fltl = document.getElementById("comboBox_FLTLXH");
+
+        const fltl = document.getElementById("comboBox_FLTLXH") as HTMLInputElement | null;
         if (fltl) {
           const val = fltl.checked ? 1 : 0;
           compositeCommandWord |= (val & 0x1) << 12; // 位 12
@@ -807,13 +820,13 @@ const loadCommand_SJCJ_F000H_once = async() => {
 
 
     wsClient.sendUdp(sendBuffer);
-    await new Promise((resolve) => {
+    await new Promise<void>((resolve) => {
         setResolveAck_F000H_SJCJ(resolve);
     });
     
 }
 
-const parseBinaryOption = (str) => {
+const parseBinaryOption = (str: string): number => {
     const match = str.match(/^([01]+)b/);
     if (match) {
         return parseInt(match[1], 2);
@@ -824,7 +837,7 @@ const parseBinaryOption = (str) => {
 /**
  * 触发 SJCJ 应答的 resolve（由 Command.js 调用）
  */
-export const triggerSJCJResolve = () => {
+export const triggerSJCJResolve = (): void => {
   if (resolveSJCJ) {
     resolveSJCJ();
     resolveSJCJ = null;
@@ -835,19 +848,20 @@ export const triggerSJCJResolve = () => {
  * 单帧发送功能
  * 发送当前帧的所有数据包，然后等待SJCJ应答
  */
-const sendSingleFrame = async () => {
+const sendSingleFrame = async (): Promise<void> => {
   // 检查是否已加载文件
   if (!buffer) {
-    statusBar.sendMessage("请先加载图像文件", "0B00H", "error");
+    statusBar.sendMessage("请先加载图像文件", "0B00H");
     return;
   }
+  const buf: Uint8Array = buffer;
 
   // 检查帧索引是否超出范围
   if (
     curFile.curFrame > curFile.endFrame ||
     curFile.curFrame < curFile.beginFrame
   ) {
-    statusBar.sendMessage("帧索引超出范围，无法发送", "0B00H", "error");
+    statusBar.sendMessage("帧索引超出范围，无法发送", "0B00H");
     return;
   }
 
@@ -884,8 +898,8 @@ const sendSingleFrame = async () => {
 
   // 计算当前帧数据位置
   let frameStart = curFile.curFrame * 32768;
-  if (frameStart >= buffer.length) {
-    statusBar.sendMessage("帧数据超出文件范围", "0B00H", "error");
+  if (frameStart >= buf.length) {
+    statusBar.sendMessage("帧数据超出文件范围", "0B00H");
     return;
   }
 
@@ -911,11 +925,11 @@ const sendSingleFrame = async () => {
 
     sendBuffer[18] = packetCount & 0xff;
     sendBuffer[19] = (packetCount >> 8) & 0xff;
-    sendBuffer.set(buffer.slice(currentPos, currentPos + chunkSize), 24);
+    sendBuffer.set(buf.slice(currentPos, currentPos + chunkSize), 24);
 
       wsClient.sendUdp(sendBuffer);
 
-    await new Promise((resolve) => {
+    await new Promise<void>((resolve) => {
       resolveAck = resolve;
     });
 
@@ -927,7 +941,7 @@ const sendSingleFrame = async () => {
   frameStats.logSent();
 
   // 等待SJCJ应答（如果数据采集正在进行）
-  await new Promise((resolve) => {
+  await new Promise<void>((resolve) => {
     const originalResolveSJCJ = resolveSJCJ;
     resolveSJCJ = () => {
       if (originalResolveSJCJ) originalResolveSJCJ();
@@ -941,7 +955,7 @@ const sendSingleFrame = async () => {
 /**
  * 更新当前帧显示
  */
-const updateCurrentFrameDisplay = () => {
+const updateCurrentFrameDisplay = (): void => {
   const displayElement = document.getElementById("current-frame-display");
   if (displayElement) {
     displayElement.textContent = `当前待发送帧索引：${curFile.curFrame}`;

@@ -1,54 +1,95 @@
-import { Utils, setLEDStatus } from "../main";
+import { Utils } from "../main";
 import PacketManager from "./BinaryTableHelper";
+
+/** PacketManager.get() 返回的 helper 类型（BinaryTableHelper | null 的非空变体） */
+type BinaryTableHelperInstance = NonNullable<ReturnType<typeof PacketManager.get>>;
+
+/** File System Access API 的 showSaveFilePicker 返回类型（浏览器实验性 API，TS DOM lib 未含） */
+interface SaveFilePickerOptions {
+    suggestedName?: string;
+    types?: { description: string; accept: Record<string, string[]> }[];
+}
+
+interface SaveFilePickerHandle {
+    createWritable: () => Promise<{
+        write: (data: Blob) => Promise<void>;
+        close: () => Promise<void>;
+    }>;
+}
+
+type ShowSaveFilePicker = (opts: SaveFilePickerOptions) => Promise<SaveFilePickerHandle>;
 import {
-  handleVideoFrame,
-  convert16to8bit,
-  set_CurrentFrame,
   drawScaledImage,
   histogramEqualization,
 } from "./Video";
 import { updateLaserImage } from "./Laser";
 
-// wsClient 和 statusBar 通过延迟动态 import 获取，避免与 Client.js 的循环依赖
-let _wsClient = null;
-let _statusBar = null;
-// 二值图 canvas 上下文
-let ctxBinary = null;
+// Video.js 导出的 handleVideoFrame / convert16to8bit / set_CurrentFrame 在本模块
+// 仅出现在注释中（遗留代码），已从 import 列表中移除。
+// setLEDStatus 同理未使用，已从 ../main import 中移除。
 
-async function getWsClient() {
+/** YC 回放状态对象（导出函数 getYCReplayState 的返回类型） */
+export interface YCReplayState {
+  isReplaying: boolean;
+  isPaused: boolean;
+  currentFrame: number;
+  totalFrames: number;
+  fps: number;
+}
+
+/** YC 回放状态变更监听器签名 */
+type YCReplayStateListener = (state: YCReplayState) => void;
+
+/** SAVE_STATUS 消息 payload（来自服务端，跨 .js 边界） */
+interface SaveStatusMessage {
+  saveType?: string;
+  status?: string;
+  path?: string;
+  msg?: string;
+}
+
+// wsClient 和 statusBar 通过延迟动态 import 获取，避免与 Client.js 的循环依赖
+// 类型来自 Client.ts / StatusBar.ts（已类型化）
+let _wsClient: typeof import("./Client").default | null = null;
+let _statusBar: typeof import("./StatusBar").default | null = null;
+// 二值图 canvas 上下文
+let ctxBinary: CanvasRenderingContext2D | null = null;
+
+async function getWsClient(): Promise<typeof import("./Client").default> {
   if (!_wsClient) _wsClient = (await import("./Client.js")).default;
   return _wsClient;
 }
-async function getStatusBar() {
+async function getStatusBar(): Promise<typeof import("./StatusBar").default> {
   if (!_statusBar) _statusBar = (await import("./StatusBar.js")).default;
   return _statusBar;
 }
 
 // YC 专属 canvas（384×384，位于 tab-17 遥测页）
-let ycCanvas = null;
-let ycCtx = null;
+let ycCanvas: HTMLCanvasElement | null = null;
+let ycCtx: CanvasRenderingContext2D | null = null;
 
-function initYCCanvas() {
+function initYCCanvas(): void {
   const container = document.getElementById("yc-image-widget");
   if (!container || ycCanvas) return;
-  ycCanvas = document.createElement("canvas");
-  ycCanvas.width = 384;
-  ycCanvas.height = 384;
-  container.appendChild(ycCanvas);
-  ycCtx = ycCanvas.getContext("2d");
+  const canvas = document.createElement("canvas");
+  canvas.width = 384;
+  canvas.height = 384;
+  container.appendChild(canvas);
+  ycCanvas = canvas;
+  ycCtx = canvas.getContext("2d");
 
   // 初始化YC二值图 canvas
   const binaryContainer = document.getElementById("yc-binary-widget");
   if (binaryContainer) {
-    const canvas = document.createElement("canvas");
-    canvas.width = 384;
-    canvas.height = 384;
-    binaryContainer.appendChild(canvas);
-    ctxBinary = canvas.getContext("2d");
+    const binCanvas = document.createElement("canvas");
+    binCanvas.width = 384;
+    binCanvas.height = 384;
+    binaryContainer.appendChild(binCanvas);
+    ctxBinary = binCanvas.getContext("2d");
   }
 }
 
-function renderYCImage(frameData, width, height) {
+function renderYCImage(frameData: Uint8Array, width: number, height: number): void {
   if (!ycCtx) return;
   const processed = histogramEqualization(frameData);
   drawScaledImage(ycCtx, processed, width, height);
@@ -83,33 +124,33 @@ let flag_zero_packet=false;
 export let isSavingYC = false;
 
 export let isSavingYCExcel = false;
-let ycExcelRows = [];
-let ycExcelHeader = null;
-let ycExcelSaveHandle = null;
+let ycExcelRows: (string | number)[][] = [];
+let ycExcelHeader: string[] | null = null;
+let ycExcelSaveHandle: SaveFilePickerHandle | null = null;
 let ycExcelFallbackFilename = "YC_Telemetry.xlsx";
 
 // YC回放状态
-let ycReplayFrames = null;
+let ycReplayFrames: Uint8Array[] | null = null;
 let ycReplayIndex = 0;
-let ycReplayTimer = null;
+let ycReplayTimer: ReturnType<typeof setInterval> | null = null;
 let ycReplayPaused = true;
 let ycReplayFps = 25;
 export let isYCReplaying = false;
-const ycReplayListeners = new Set();
+const ycReplayListeners = new Set<YCReplayStateListener>();
 
-function normalizeYCReplayFps(fps) {
+function normalizeYCReplayFps(fps: number): number {
     const value = Number(fps);
     if (!Number.isFinite(value) || value <= 0) return 25;
     return Math.max(1, Math.min(value, 200));
 }
 
-function clampYCReplayIndex(index) {
+function clampYCReplayIndex(index: number): number {
     const total = ycReplayFrames ? ycReplayFrames.length : 0;
     if (total === 0) return 0;
     return Math.max(0, Math.min(index, total - 1));
 }
 
-function notifyYCReplayState() {
+function notifyYCReplayState(): void {
     const state = getYCReplayState();
     ycReplayListeners.forEach((listener) => {
         try {
@@ -120,13 +161,13 @@ function notifyYCReplayState() {
     });
 }
 
-function scheduleYCReplayTimer() {
+function scheduleYCReplayTimer(): void {
     if (ycReplayTimer) {
         clearInterval(ycReplayTimer);
         ycReplayTimer = null;
     }
     ycReplayTimer = setInterval(() => {
-        if (ycReplayPaused) return;
+        if (ycReplayPaused || !ycReplayFrames) return;
         if (ycReplayIndex >= ycReplayFrames.length) {
             stopYCReplay();
             return;
@@ -141,7 +182,7 @@ function scheduleYCReplayTimer() {
 
 
 
-export function initializeYC() {
+export function initializeYC(): void {
     Utils.loadCSVToTable("./csv/LVDS_YC_Recv.csv", "tableWidget_LVDS_YC", 47, 4);
     Utils.centerAlignTable("tableWidget_LVDS_YC");
     Utils.centerAlignTable("tableWidget_YC_JG");
@@ -150,7 +191,7 @@ export function initializeYC() {
     bindYCExcelSaveEventsClean();
 }
 
-const set_YC_table = () => {
+const set_YC_table = (): void => {
     Utils.setTableCellText("tableWidget_LVDS_YC_ZTZ", 0, 0, "同步/制冷到位状态");
     Utils.setTableCellText("tableWidget_LVDS_YC_ZTZ", 1, 0, "AD/测温二极管自检结果");
     Utils.setTableCellText("tableWidget_LVDS_YC_ZTZ", 2, 0, "红外积分时间档位");
@@ -162,27 +203,29 @@ const set_YC_table = () => {
     Utils.setTableCellText("tableWidget_LVDS_YC_ZLSTATE", 4, 0, "备用");
 }
 
-export const handle_YC_half=(data)=>{
+export const handle_YC_half=(data: Uint8Array): void => {
+    void data; // 遗留函数：参数未在逻辑中使用
     packet_half_count+=1;
     if(packet_half_count==2){
         packet_half_count=0;
     }
 }
 
-export const handle_YC = (data) => {
+export const handle_YC = (data: Uint8Array): void => {
     //console.log(data);
-    let data_=new Uint8Array(data);
+    const data_=new Uint8Array(data);
+    let working: Uint8Array;
     if(data_[0]==0x76){
         //let data_=new Uint8Array(data);
     //data=data_.subarray(2);
         //const image_data = data.subarray(2, 1105);
         //state=data[0];
-        
-        data=data_.subarray(3);
+
+        working=data_.subarray(3);
         //head_data=data_.subarray(0,3);
-        buffer_per.set(data,0);
+        buffer_per.set(working,0);
         sign_half+=1;
-    
+
     }
     //接收到上半包，sign_half=0,说明当前收到的上半包为一个整包的第一包，合法，
     // 接收到上半包，sign_half=1,说明当前收到的上半包之前收到了另一个上半包，不合法
@@ -190,19 +233,20 @@ export const handle_YC = (data) => {
     //接收到下半包，sign_half=0，说明当前接收到的下半包之前没有接收到上半包，不合法
     else{
         //console.log(data);
-        
+
         //let data_=new Uint8Array(data);
         //data=data_.subarray(3);
-        buffer_per.set(data,1102);
+        working=data;
+        buffer_per.set(working,1102);
         //console.log(buffer_per[2]);
-        let state=buffer_per[0]|(buffer_per[1]<<8);
-        let frame_count=buffer_per[2];
+        const state=buffer_per[0]|(buffer_per[1]<<8);
+        const frame_count=buffer_per[2];
 
         //state_data=buffer_per.subarray(0,3);
-        
-            let image_data=buffer_per.subarray(3,2051);
+
+            const image_data=buffer_per.subarray(3,2051);
         //console.log(buffer_per);
-        
+
         switch (state) {
         case 0x11:
             handle_YC_11H(image_data,frame_count);
@@ -236,17 +280,21 @@ export const handle_YC = (data) => {
 
         const table_data = buffer_per.subarray(2051);
         const helper = PacketManager.get("LVDS_YC_Recv");
-        helper.loadBufferFromNet(table_data);
-        helper.updateAllToTable("tableWidget_LVDS_YC");
-        const statusValues = updateYCStatusTables(table_data);
-        appendYCExcelRowClean(helper);
+        if (helper) {
+            helper.loadBufferFromNet(table_data);
+            helper.updateAllToTable("tableWidget_LVDS_YC");
+        }
+        updateYCStatusTables(table_data);
+        if (helper) {
+            appendYCExcelRowClean(helper);
+        }
     }
-    
-    
-    
+
+
+
 }
 
-function decodeYCStatusWords(table_data) {
+function decodeYCStatusWords(table_data: Uint8Array): number[] {
     const ztz = table_data[112] ?? 0;
     const zlz = table_data[111] ?? 0;
     return [
@@ -261,25 +309,25 @@ function decodeYCStatusWords(table_data) {
     ];
 }
 
-function updateYCStatusTables(table_data) {
+function updateYCStatusTables(table_data: Uint8Array): number[] {
     const [zt_tb_zl, zt_ad_cw, zt_hwzlt, zt_jgq_wk,
         zlz_jsxy, zlz_ywhb, zlz_gif_ybly, zlz_zhxy] = decodeYCStatusWords(table_data);
 
-    Utils.setTableCellText("tableWidget_LVDS_YC_ZTZ", 0, 1, zt_tb_zl);
-    Utils.setTableCellText("tableWidget_LVDS_YC_ZTZ", 1, 1, zt_ad_cw);
-    Utils.setTableCellText("tableWidget_LVDS_YC_ZTZ", 2, 1, zt_hwzlt);
-    Utils.setTableCellText("tableWidget_LVDS_YC_ZTZ", 3, 1, zt_jgq_wk);
+    Utils.setTableCellText("tableWidget_LVDS_YC_ZTZ", 0, 1, String(zt_tb_zl));
+    Utils.setTableCellText("tableWidget_LVDS_YC_ZTZ", 1, 1, String(zt_ad_cw));
+    Utils.setTableCellText("tableWidget_LVDS_YC_ZTZ", 2, 1, String(zt_hwzlt));
+    Utils.setTableCellText("tableWidget_LVDS_YC_ZTZ", 3, 1, String(zt_jgq_wk));
 
-    Utils.setTableCellText("tableWidget_LVDS_YC_ZLSTATE", 0, 1, zlz_jsxy);
-    Utils.setTableCellText("tableWidget_LVDS_YC_ZLSTATE", 1, 1, zlz_ywhb);
-    Utils.setTableCellText("tableWidget_LVDS_YC_ZLSTATE", 2, 1, zlz_gif_ybly);
-    Utils.setTableCellText("tableWidget_LVDS_YC_ZLSTATE", 3, 1, zlz_zhxy);
+    Utils.setTableCellText("tableWidget_LVDS_YC_ZLSTATE", 0, 1, String(zlz_jsxy));
+    Utils.setTableCellText("tableWidget_LVDS_YC_ZLSTATE", 1, 1, String(zlz_ywhb));
+    Utils.setTableCellText("tableWidget_LVDS_YC_ZLSTATE", 2, 1, String(zlz_gif_ybly));
+    Utils.setTableCellText("tableWidget_LVDS_YC_ZLSTATE", 3, 1, String(zlz_zhxy));
 
     return [zt_tb_zl, zt_ad_cw, zt_hwzlt, zt_jgq_wk,
         zlz_jsxy, zlz_ywhb, zlz_gif_ybly, zlz_zhxy];
 }
 
-export const handle_YC_11H = (data,packetCount) => {
+export const handle_YC_11H = (data: Uint8Array, packetCount: number): void => {
     if (packetCount !== packet_count_11H) { return; }
 
     packet_count_11H += 1;
@@ -323,7 +371,7 @@ export const handle_YC_11H = (data,packetCount) => {
 
 }
 
-export const handle_YC_22H = (data,packetCount) => {
+export const handle_YC_22H = (data: Uint8Array, packetCount: number): void => {
     if (packetCount !== packet_count_22H ) { return; }
 
     packet_count_22H += 1;
@@ -365,7 +413,7 @@ export const handle_YC_22H = (data,packetCount) => {
     }
 }
 
-export const handle_YC_33H = (data) => {
+export const handle_YC_33H = (data: Uint8Array): void => {
     //set_CurrentFrame(data);
     //handleVideoFrame(data, 32, 32);
     renderYCImage(data, 32, 32);
@@ -396,7 +444,7 @@ export const handle_YC_33H = (data) => {
   }
 }
  
-export const handle_YC_44H = (data) => {
+export const handle_YC_44H = (data: Uint8Array): void => {
     const image_data=data.subarray(0,1922);
     //set_CurrentFrame(image_data);
     //handleVideoFrame(image_data, 31, 31);
@@ -432,38 +480,41 @@ export const handle_YC_44H = (data) => {
 }
 
 // ==================== 内部：重置图像组帧计数器 ====================
-function bindYCExcelSaveEvents() {
-    document.getElementById("pushButton_Start_Save_YC_Excel")?.addEventListener("click", () => {
+function bindYCExcelSaveEvents(): void {
+    const startBtn = document.getElementById("pushButton_Start_Save_YC_Excel") as HTMLButtonElement | null;
+    const stopBtn = document.getElementById("pushButton_Stop_Save_YC_Excel") as HTMLButtonElement | null;
+    startBtn?.addEventListener("click", () => {
         startSavingYCExcel();
     });
-    document.getElementById("pushButton_Stop_Save_YC_Excel")?.addEventListener("click", () => {
+    stopBtn?.addEventListener("click", () => {
         stopSavingYCExcel();
     });
     updateYCExcelButtons();
 }
 
-function updateYCExcelButtons() {
-    const startBtn = document.getElementById("pushButton_Start_Save_YC_Excel");
-    const stopBtn = document.getElementById("pushButton_Stop_Save_YC_Excel");
+function updateYCExcelButtons(): void {
+    const startBtn = document.getElementById("pushButton_Start_Save_YC_Excel") as HTMLButtonElement | null;
+    const stopBtn = document.getElementById("pushButton_Stop_Save_YC_Excel") as HTMLButtonElement | null;
     if (startBtn) startBtn.disabled = isSavingYCExcel;
     if (stopBtn) stopBtn.disabled = !isSavingYCExcel;
 }
 
-function buildYCExcelFilename() {
+function buildYCExcelFilename(): string {
     const now = new Date();
-    const pad = (value) => String(value).padStart(2, "0");
+    const pad = (value: number): string => String(value).padStart(2, "0");
     return `YC_Telemetry_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.xlsx`;
 }
 
-function getYCExcelTimestamp() {
+function getYCExcelTimestamp(): string {
     const now = new Date();
-    const pad = (value, size = 2) => String(value).padStart(size, "0");
+    const pad = (value: number, size = 2): string => String(value).padStart(size, "0");
     return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.${pad(now.getMilliseconds(), 3)}`;
 }
 
-async function chooseYCExcelSaveHandle(filename) {
-    if (typeof window.showSaveFilePicker !== "function") return null;
-    return await window.showSaveFilePicker({
+async function chooseYCExcelSaveHandle(filename: string): Promise<SaveFilePickerHandle | null> {
+    const picker = (window as unknown as { showSaveFilePicker?: ShowSaveFilePicker }).showSaveFilePicker;
+    if (typeof picker !== "function") return null;
+    return await picker({
         suggestedName: filename,
         types: [
             {
@@ -476,7 +527,7 @@ async function chooseYCExcelSaveHandle(filename) {
     });
 }
 
-function appendYCExcelRow(helper) {
+function appendYCExcelRow(helper: BinaryTableHelperInstance | null): void {
     if (!isSavingYCExcel || !helper) return;
     if (!ycExcelHeader) {
         ycExcelHeader = ["时间戳", ...helper.getAllNames("tableWidget_LVDS_YC")];
@@ -484,18 +535,24 @@ function appendYCExcelRow(helper) {
     ycExcelRows.push([getYCExcelTimestamp(), ...helper.getAllValues()]);
 }
 
-async function buildYCExcelBlob() {
-    const Excel = globalThis.ExcelJS;
+async function buildYCExcelBlob(): Promise<Blob> {
+    const Excel = (globalThis as { ExcelJS?: unknown }).ExcelJS as { Workbook: new () => {
+        addWorksheet: (name: string) => {
+            columns: unknown[];
+            addRow: (row: unknown) => void;
+        };
+        xlsx: { writeBuffer: () => Promise<ArrayBuffer> };
+    } } | undefined;
     if (!Excel) {
         throw new Error("ExcelJS 未加载，无法保存 Excel 文件");
     }
 
     const helper = PacketManager.get("LVDS_YC_Recv");
-    const header = ycExcelHeader || ["时间戳", ...helper.getAllNames("tableWidget_LVDS_YC")];
+    const header = ycExcelHeader || (helper ? ["时间戳", ...helper.getAllNames("tableWidget_LVDS_YC")] : ["时间戳"]);
     const wb = new Excel.Workbook();
     const ws = wb.addWorksheet("YC_Telemetry");
 
-    ws.columns = header.map((name, index) => ({
+    ws.columns = header.map((name: string, index: number) => ({
         header: name,
         key: `col_${index}`,
         width: index === 0 ? 24 : Math.min(Math.max(String(name).length + 4, 12), 28),
@@ -508,7 +565,7 @@ async function buildYCExcelBlob() {
     });
 }
 
-async function writeYCExcelBlob(blob) {
+async function writeYCExcelBlob(blob: Blob): Promise<void> {
     if (ycExcelSaveHandle) {
         const writable = await ycExcelSaveHandle.createWritable();
         await writable.write(blob);
@@ -529,7 +586,7 @@ async function writeYCExcelBlob(blob) {
     }, 1000);
 }
 
-export async function startSavingYCExcel() {
+export async function startSavingYCExcel(): Promise<void> {
     if (isSavingYCExcel) return;
     const sb = await getStatusBar();
     ycExcelRows = [];
@@ -540,7 +597,7 @@ export async function startSavingYCExcel() {
     try {
         ycExcelSaveHandle = await chooseYCExcelSaveHandle(ycExcelFallbackFilename);
     } catch (err) {
-        if (err.name === "AbortError") {
+        if (err instanceof Error && err.name === "AbortError") {
             sb.sendMessage("已取消保存遥测 Excel", "none");
             return;
         }
@@ -555,7 +612,7 @@ export async function startSavingYCExcel() {
     );
 }
 
-export async function stopSavingYCExcel() {
+export async function stopSavingYCExcel(): Promise<void> {
     if (!isSavingYCExcel) return;
     const sb = await getStatusBar();
     isSavingYCExcel = false;
@@ -567,7 +624,8 @@ export async function stopSavingYCExcel() {
         sb.sendMessage(`遥测 Excel 保存完成，共 ${ycExcelRows.length} 行`, "none");
     } catch (err) {
         console.error("[YC] 保存遥测 Excel 失败:", err);
-        sb.sendMessage(`遥测 Excel 保存失败: ${err.message}`, "none");
+        const errMsg = err instanceof Error ? err.message : String(err);
+        sb.sendMessage(`遥测 Excel 保存失败: ${errMsg}`, "none");
     } finally {
         ycExcelSaveHandle = null;
         ycExcelRows = [];
@@ -575,38 +633,41 @@ export async function stopSavingYCExcel() {
     }
 }
 
-function bindYCExcelSaveEventsClean() {
-    document.getElementById("pushButton_Start_Save_YC_Excel")?.addEventListener("click", () => {
+function bindYCExcelSaveEventsClean(): void {
+    const startBtn = document.getElementById("pushButton_Start_Save_YC_Excel") as HTMLButtonElement | null;
+    const stopBtn = document.getElementById("pushButton_Stop_Save_YC_Excel") as HTMLButtonElement | null;
+    startBtn?.addEventListener("click", () => {
         startSavingYCExcelClean();
     });
-    document.getElementById("pushButton_Stop_Save_YC_Excel")?.addEventListener("click", () => {
+    stopBtn?.addEventListener("click", () => {
         stopSavingYCExcelClean();
     });
     updateYCExcelButtonsClean();
 }
 
-function updateYCExcelButtonsClean() {
-    const startBtn = document.getElementById("pushButton_Start_Save_YC_Excel");
-    const stopBtn = document.getElementById("pushButton_Stop_Save_YC_Excel");
+function updateYCExcelButtonsClean(): void {
+    const startBtn = document.getElementById("pushButton_Start_Save_YC_Excel") as HTMLButtonElement | null;
+    const stopBtn = document.getElementById("pushButton_Stop_Save_YC_Excel") as HTMLButtonElement | null;
     if (startBtn) startBtn.disabled = isSavingYCExcel;
     if (stopBtn) stopBtn.disabled = !isSavingYCExcel;
 }
 
-function buildYCExcelFilenameClean() {
+function buildYCExcelFilenameClean(): string {
     const now = new Date();
-    const pad = (value) => String(value).padStart(2, "0");
+    const pad = (value: number): string => String(value).padStart(2, "0");
     return `YC_Telemetry_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.xlsx`;
 }
 
-function getYCExcelTimestampClean() {
+function getYCExcelTimestampClean(): string {
     const now = new Date();
-    const pad = (value, size = 2) => String(value).padStart(size, "0");
+    const pad = (value: number, size = 2): string => String(value).padStart(size, "0");
     return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.${pad(now.getMilliseconds(), 3)}`;
 }
 
-async function chooseYCExcelSaveHandleClean(filename) {
-    if (typeof window.showSaveFilePicker !== "function") return null;
-    return await window.showSaveFilePicker({
+async function chooseYCExcelSaveHandleClean(filename: string): Promise<SaveFilePickerHandle | null> {
+    const picker = (window as unknown as { showSaveFilePicker?: ShowSaveFilePicker }).showSaveFilePicker;
+    if (typeof picker !== "function") return null;
+    return await picker({
         suggestedName: filename,
         types: [
             {
@@ -619,7 +680,7 @@ async function chooseYCExcelSaveHandleClean(filename) {
     });
 }
 
-function appendYCExcelRowClean(helper) {
+function appendYCExcelRowClean(helper: BinaryTableHelperInstance | null): void {
     if (!isSavingYCExcel || !helper) return;
     if (!ycExcelHeader) {
         ycExcelHeader = ["Timestamp", ...helper.getAllNames("tableWidget_LVDS_YC")];
@@ -627,18 +688,24 @@ function appendYCExcelRowClean(helper) {
     ycExcelRows.push([getYCExcelTimestampClean(), ...helper.getAllValues()]);
 }
 
-async function buildYCExcelBlobClean() {
-    const Excel = globalThis.ExcelJS;
+async function buildYCExcelBlobClean(): Promise<Blob> {
+    const Excel = (globalThis as { ExcelJS?: unknown }).ExcelJS as { Workbook: new () => {
+        addWorksheet: (name: string) => {
+            columns: unknown[];
+            addRow: (row: unknown) => void;
+        };
+        xlsx: { writeBuffer: () => Promise<ArrayBuffer> };
+    } } | undefined;
     if (!Excel) {
         throw new Error("ExcelJS is not loaded");
     }
 
     const helper = PacketManager.get("LVDS_YC_Recv");
-    const header = ycExcelHeader || ["Timestamp", ...helper.getAllNames("tableWidget_LVDS_YC")];
+    const header = ycExcelHeader || (helper ? ["Timestamp", ...helper.getAllNames("tableWidget_LVDS_YC")] : ["Timestamp"]);
     const wb = new Excel.Workbook();
     const ws = wb.addWorksheet("YC_Telemetry");
 
-    ws.columns = header.map((name, index) => ({
+    ws.columns = header.map((name: string, index: number) => ({
         header: name,
         key: `col_${index}`,
         width: index === 0 ? 24 : Math.min(Math.max(String(name).length + 4, 12), 28),
@@ -651,7 +718,7 @@ async function buildYCExcelBlobClean() {
     });
 }
 
-async function writeYCExcelBlobClean(blob) {
+async function writeYCExcelBlobClean(blob: Blob): Promise<void> {
     if (ycExcelSaveHandle) {
         const writable = await ycExcelSaveHandle.createWritable();
         await writable.write(blob);
@@ -672,7 +739,7 @@ async function writeYCExcelBlobClean(blob) {
     }, 1000);
 }
 
-async function startSavingYCExcelClean() {
+async function startSavingYCExcelClean(): Promise<void> {
     if (isSavingYCExcel) return;
     ycExcelRows = [];
     ycExcelHeader = null;
@@ -682,7 +749,7 @@ async function startSavingYCExcelClean() {
     try {
         ycExcelSaveHandle = await chooseYCExcelSaveHandleClean(ycExcelFallbackFilename);
     } catch (err) {
-        if (err.name === "AbortError") {
+        if (err instanceof Error && err.name === "AbortError") {
             const sb = await getStatusBar();
             sb.sendMessage("YC Excel save cancelled", "none");
             return;
@@ -699,7 +766,7 @@ async function startSavingYCExcelClean() {
     );
 }
 
-async function stopSavingYCExcelClean() {
+async function stopSavingYCExcelClean(): Promise<void> {
     if (!isSavingYCExcel) return;
     const sb = await getStatusBar();
     isSavingYCExcel = false;
@@ -711,7 +778,8 @@ async function stopSavingYCExcelClean() {
         sb.sendMessage(`YC Excel saved, ${ycExcelRows.length} rows`, "none");
     } catch (err) {
         console.error("[YC] Failed to save YC Excel:", err);
-        sb.sendMessage(`YC Excel save failed: ${err.message}`, "none");
+        const errMsg = err instanceof Error ? err.message : String(err);
+        sb.sendMessage(`YC Excel save failed: ${errMsg}`, "none");
     } finally {
         ycExcelSaveHandle = null;
         ycExcelRows = [];
@@ -719,7 +787,7 @@ async function stopSavingYCExcelClean() {
     }
 }
 
-function resetYCCounters() {
+function resetYCCounters(): void {
     packet_count_11H = 0;
     packet_count_22H = 0;
     packet_count_33H = 0;
@@ -729,14 +797,14 @@ function resetYCCounters() {
 }
 
 // ==================== 内部：回放单个 buffer_per 帧 ====================
-function replayYCFrame(frameBuf) {
+function replayYCFrame(frameBuf: Uint8Array): void {
     //console.log("切前",frameBuf);
-    frameBuf=frameBuf.subarray(1);
+    const buf=frameBuf.subarray(1);
     //console.log("切后",frameBuf);
     // frameBuf 是 2212 字节，与录制时的 buffer_per 完全一致
-    const state = frameBuf[0] | (frameBuf[1] << 8);
-    const frame_count = frameBuf[2];
-    const image_data = frameBuf.subarray(3, 2051);
+    const state = buf[0] | (buf[1] << 8);
+    const frame_count = buf[2];
+    const image_data = buf.subarray(3, 2051);
 
     switch (state) {
         case 0x11:
@@ -755,17 +823,19 @@ function replayYCFrame(frameBuf) {
             break;
     }
     if(state===0x11||state===0x22||state===0x33||state===0x44){
-    const table_data = frameBuf.subarray(2051);
+    const table_data = buf.subarray(2051);
     const helper = PacketManager.get("LVDS_YC_Recv");
-    helper.loadBufferFromNet(table_data);
-    helper.updateAllToTable("tableWidget_LVDS_YC");
-    const statusValues = updateYCStatusTables(table_data);
+    if (helper) {
+        helper.loadBufferFromNet(table_data);
+        helper.updateAllToTable("tableWidget_LVDS_YC");
+    }
+    updateYCStatusTables(table_data);
     }
 }
 
 // ==================== YC录制 ====================
 
-export async function startSavingYC() {
+export async function startSavingYC(): Promise<void> {
     const [ws, sb] = await Promise.all([getWsClient(), getStatusBar()]);
     sb.sendMessage("请在服务端窗口选择YC数据保存位置...", "none");
     const cmd = JSON.stringify({
@@ -777,23 +847,23 @@ export async function startSavingYC() {
     ws.sendText(cmd);
     console.log("[YC] 请求服务端弹出YC文件保存对话框");
 
-    const onStatus = async (msg) => {
+    const onStatus = async (msg: SaveStatusMessage): Promise<void> => {
         if (msg.saveType !== "yc") return;
         ws.off("SAVE_STATUS", onStatus);
         const s = await getStatusBar();
         if (msg.status === "started") {
             isSavingYC = true;
-            s.sendMessage(`正在保存YC数据 → ${msg.path}`, "none");
+            s.sendMessage(`正在保存YC数据 → ${msg.path ?? ""}`, "none");
         } else if (msg.status === "cancelled") {
             s.sendMessage("已取消保存YC数据", "none");
         } else if (msg.status === "error") {
-            s.sendMessage(`YC数据保存失败: ${msg.msg}`, "none");
+            s.sendMessage(`YC数据保存失败: ${msg.msg ?? ""}`, "none");
         }
     };
     ws.on("SAVE_STATUS", onStatus);
 }
 
-export async function stopSavingYC() {
+export async function stopSavingYC(): Promise<void> {
     if (isSavingYC) {
         const [ws, sb] = await Promise.all([getWsClient(), getStatusBar()]);
         ws.sendText(JSON.stringify({
@@ -812,21 +882,26 @@ export async function stopSavingYC() {
  * 从 File 对象加载 YC 录制文件
  * 每帧固定 2210 字节（buffer_per 原始数据）
  */
-export async function loadYCReplayFile(file) {
-    return new Promise((resolve, reject) => {
+export async function loadYCReplayFile(file: File): Promise<Uint8Array[]> {
+    return new Promise<Uint8Array[]>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (e) => {
             try {
-                const raw = new Uint8Array(e.target.result);
+                const target = e.target;
+                if (!target || !target.result) {
+                    reject(new Error("YC文件读取结果为空"));
+                    return;
+                }
+                const raw = new Uint8Array(target.result as ArrayBuffer);
                 // 跳过无用的头部字节：查找有效的帧头 (76 11 / 76 22 / 76 33 / 76 44)
-                const VALID_HEADERS = [
+                const VALID_HEADERS: ReadonlyArray<readonly [number, number]> = [
                     [0x76, 0x11],
                     [0x76, 0x22],
                     [0x76, 0x33],
                     [0x76, 0x44],
                 ];
                 let offset = 0;
-                const isValidHeader = (pos) =>
+                const isValidHeader = (pos: number): boolean =>
                     VALID_HEADERS.some(([b0, b1]) => raw[pos] === b0 && raw[pos + 1] === b1);
                 while (offset < raw.length - 1 && !isValidHeader(offset)) {
                     offset++;
@@ -842,7 +917,7 @@ export async function loadYCReplayFile(file) {
                 const FRAME_SIZE = 2304;
                 const totalFrames = Math.floor(uint8Array.length / FRAME_SIZE);
                 console.log(`[YC] 文件大小: ${uint8Array.length} 字节 (去头部后), 每帧: ${FRAME_SIZE} 字节, 总帧数: ${totalFrames}`);
-                const frames = [];
+                const frames: Uint8Array[] = [];
                 for (let i = 0; i < totalFrames; i++) {
                     frames.push(uint8Array.slice(i * FRAME_SIZE, (i + 1) * FRAME_SIZE));
                 }
@@ -858,10 +933,10 @@ export async function loadYCReplayFile(file) {
 
 /**
  * 开始YC回放
- * @param {Uint8Array[]} frames
- * @param {number} fps - 回放帧率（buffer_per帧率，不是图像帧率）
+ * @param frames - 回放帧数组
+ * @param fps - 回放帧率（buffer_per帧率，不是图像帧率）
  */
-export function startYCReplay(frames, fps = ycReplayFps) {
+export function startYCReplay(frames: Uint8Array[], fps: number = ycReplayFps): void {
     if (!frames || frames.length === 0) return;
     stopYCReplay();
     resetYCCounters();
@@ -878,20 +953,20 @@ export function startYCReplay(frames, fps = ycReplayFps) {
     scheduleYCReplayTimer();
 }
 
-export function pauseYCReplay() {
+export function pauseYCReplay(): void {
     ycReplayPaused = true;
     console.log("[YC] 暂停回放");
     notifyYCReplayState();
 }
 
-export function resumeYCReplay() {
+export function resumeYCReplay(): void {
     if (!ycReplayFrames || ycReplayFrames.length === 0) return;
     ycReplayPaused = false;
     console.log("[YC] 继续回放");
     notifyYCReplayState();
 }
 
-export function stopYCReplay() {
+export function stopYCReplay(): void {
     if (ycReplayTimer) {
         clearInterval(ycReplayTimer);
         ycReplayTimer = null;
@@ -905,7 +980,7 @@ export function stopYCReplay() {
     notifyYCReplayState();
 }
 
-export function seekYCReplay(index) {
+export function seekYCReplay(index: number): void {
     if (!ycReplayFrames) return;
     ycReplayIndex = clampYCReplayIndex(index);
     resetYCCounters();
@@ -914,7 +989,7 @@ export function seekYCReplay(index) {
     notifyYCReplayState();
 }
 
-export function setYCReplayFps(fps) {
+export function setYCReplayFps(fps: number): number {
     ycReplayFps = normalizeYCReplayFps(fps);
     if (isYCReplaying && ycReplayFrames) {
         scheduleYCReplayTimer();
@@ -923,7 +998,7 @@ export function setYCReplayFps(fps) {
     return ycReplayFps;
 }
 
-export function replayPreviousYCFrame() {
+export function replayPreviousYCFrame(): void {
     if (!ycReplayFrames || !ycReplayPaused) return;
     const targetIndex = clampYCReplayIndex(ycReplayIndex - 2);
     resetYCCounters();
@@ -932,7 +1007,7 @@ export function replayPreviousYCFrame() {
     notifyYCReplayState();
 }
 
-export function replayNextYCFrame() {
+export function replayNextYCFrame(): void {
     if (!ycReplayFrames || !ycReplayPaused) return;
     const targetIndex = clampYCReplayIndex(ycReplayIndex);
     resetYCCounters();
@@ -941,14 +1016,14 @@ export function replayNextYCFrame() {
     notifyYCReplayState();
 }
 
-export function onYCReplayStateChange(listener) {
+export function onYCReplayStateChange(listener: YCReplayStateListener): () => void {
     if (typeof listener !== "function") return () => {};
     ycReplayListeners.add(listener);
     listener(getYCReplayState());
-    return () => ycReplayListeners.delete(listener);
+    return () => { ycReplayListeners.delete(listener); };
 }
 
-export function getYCReplayState() {
+export function getYCReplayState(): YCReplayState {
     return {
         isReplaying: isYCReplaying,
         isPaused: ycReplayPaused,

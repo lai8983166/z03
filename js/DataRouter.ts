@@ -1,10 +1,17 @@
 import { Utils, setLEDStatus } from "../main";
 import statusBar from "./StatusBar";
+import wsClient from "./Client";
 
 let sendBuffer = new Uint8Array(1040);
-let resolveAck = null;
+let resolveAck: ((value: unknown) => void) | null = null;
 
-export function initializeDataRouter() {
+/** Type-safe helper: read a numeric value from an input/select element by ID */
+const getInputNumber = (id: string): number => {
+  const el = document.getElementById(id) as HTMLInputElement | HTMLSelectElement | null;
+  return Number(el?.value ?? 0) || 0;
+};
+
+export function initializeDataRouter(): void {
   Utils.loadCSVToTable(
     "./csv/SJL_SJCJ_Send.csv",
     "tableWidget_SJL_SJCJ_send",
@@ -35,29 +42,29 @@ export function initializeDataRouter() {
 
     Utils.centerAlignTable("tableWidget_SJL_SJCJ_recv_0x00");
 
-    let sjlSjcjTimer = null;
+    let sjlSjcjTimer: ReturnType<typeof setInterval> | null = null;
     const btnSJL_A = document.getElementById("pushbutton_SJL_A");
-    btnSJL_A.addEventListener("click", () => {
+    btnSJL_A?.addEventListener("click", () => {
         if (sjlSjcjTimer !== null) {
             clearInterval(sjlSjcjTimer);
             sjlSjcjTimer = null;
-            btnSJL_A.textContent = "发送数据链数据采集A帧";
+            btnSJL_A!.textContent = "发送数据链数据采集A帧";
             statusBar.sendMessage("已停止发送数据链数据采集A帧", "gray");
         } else {
             loadCommand_SJL_SJCJ();
             sjlSjcjTimer = setInterval(() => {
                 loadCommand_SJL_SJCJ();
             }, 50);
-            btnSJL_A.textContent = "停止发送数据链数据采集A帧";
+            btnSJL_A!.textContent = "停止发送数据链数据采集A帧";
         }
     })
 
-    document.getElementById("pushtton_SJL_TB_A").addEventListener("click", () => {
+    document.getElementById("pushtton_SJL_TB_A")?.addEventListener("click", () => {
         loadCommand_SJLTB_A();
     })
 }
 
-const set_tableWidget_SJL_TB_B = () => {
+const set_tableWidget_SJL_TB_B = (): void => {
     Utils.setTableCellText(
         "tableWidget_SJL_TB_B",
         0,
@@ -102,7 +109,7 @@ const set_tableWidget_SJL_TB_B = () => {
     );
 }
 
-const set_tableWidget_SJL_SJCJ_recv_YC = () => {
+const set_tableWidget_SJL_SJCJ_recv_YC = (): void => {
     
     Utils.setTableCellText(
         "tableWidget_SJL_SJCJ_recv_YC",
@@ -154,7 +161,7 @@ const set_tableWidget_SJL_SJCJ_recv_YC = () => {
     );
 }
 
-const set_tableWidget_SJL_SJCJ_recv_0xFF_MBXX = () => {
+const set_tableWidget_SJL_SJCJ_recv_0xFF_MBXX = (): void => {
   Utils.setTableCellText(
     "tableWidget_SJL_SJCJ_recv_0xFF_MBXX",
     0,
@@ -445,7 +452,7 @@ const set_tableWidget_SJL_SJCJ_recv_0xFF_MBXX = () => {
   );
 };
 
-const loadCommand_SJL_SJCJ = () => {
+const loadCommand_SJL_SJCJ = (): void => {
   sendBuffer[0] = 0x31;
   sendBuffer[1] = 0x02;
   sendBuffer[2] = 0x01;
@@ -467,11 +474,11 @@ const loadCommand_SJL_SJCJ = () => {
   const W = new Uint16Array(10); // 下标 0~9 对应 Word 1~10
 
   // 提取 UI 值 (不需要比例因子的直接取整参与位移)
-  const Mtype = Number(document.getElementById("SJL_Mtype").value) || 0;
-  const SPL = Number(document.getElementById("SJL_SPL").value) || 0;
-  const CA = Number(document.getElementById("SJL_CA").value) || 0;
-  const SGDN = Number(document.getElementById("SJL_SGDN").value) || 0;
-  const SAM = Number(document.getElementById("SJL_SAM").value) || 0;
+  const Mtype = getInputNumber("SJL_Mtype");
+  const SPL = getInputNumber("SJL_SPL");
+  const CA = getInputNumber("SJL_CA");
+  const SGDN = getInputNumber("SJL_SGDN");
+  const SAM = getInputNumber("SJL_SAM");
 
   // 字 1: MType(3) + SPL(1) + CA(2) + 0(2) + 0(1) + SGDN(3) + SAM(4)
   W[0] =
@@ -482,8 +489,8 @@ const loadCommand_SJL_SJCJ = () => {
     (SAM & 0x0f);
 
   // 经纬度 24位提取与逆运算缩放：实际值 * 2^23 / 90.0
-  const LON = Number(document.getElementById("SJL_LON").value) || 0;
-  const LAT = Number(document.getElementById("SJL_LAT").value) || 0;
+  const LON = getInputNumber("SJL_LON");
+  const LAT = getInputNumber("SJL_LAT");
   const lon_24 = Math.round((LON * (1 << 23)) / 90.0) & 0xffffff;
   const lat_24 = Math.round((LAT * (1 << 23)) / 90.0) & 0xffffff;
 
@@ -499,34 +506,34 @@ const loadCommand_SJL_SJCJ = () => {
   W[3] = (lat_24 >> 8) & 0xffff;
 
   // 字 5: 导弹 MHO (16位，LSB=1m)
-  const MHO = Number(document.getElementById("SJL_MHO").value) || 0;
+  const MHO = getInputNumber("SJL_MHO");
   W[4] = Math.round(MHO) & 0xffff;
 
   // ==== 速度及对应标志位提取与逆运算缩放：LSB = 2.5m/s ====
-  const MVx_UI = Number(document.getElementById("SJL_MVx").value) || 0;
+  const MVx_UI = getInputNumber("SJL_MVx");
   const MVx = Math.round(MVx_UI / 2.5) & 0x03ff; // 取10位补码
-  const EWI = Number(document.getElementById("SJL_EWI").value) || 0;
+  const EWI = getInputNumber("SJL_EWI");
 
   // 字 6: MVx(10位) + EWI(1位) + 0(5位)
   // EWI占第11位，所以左移5位，后面5位全0
   W[5] = (MVx << 6) | ((EWI & 0x01) << 5);
 
-  const MVy_UI = Number(document.getElementById("SJL_MVy").value) || 0;
+  const MVy_UI = getInputNumber("SJL_MVy");
   const MVy = Math.round(MVy_UI / 2.5) & 0x03ff; // 取10位补码
-  const MCT = Number(document.getElementById("SJL_MCT").value) || 0;
+  const MCT = getInputNumber("SJL_MCT");
 
   // 字 7: MVy(10位) + 0(2位) + MCT(3位) + 0(1位)
   // MCT从第13位开始占3位(即占据13、14、15位)，所以左移1位
   W[6] = (MVy << 6) | ((MCT & 0x07) << 1);
 
-  const MVz_UI = Number(document.getElementById("SJL_MVz").value) || 0;
+  const MVz_UI = getInputNumber("SJL_MVz");
   const MVz = Math.round(MVz_UI / 2.5) & 0x03ff; // 取10位补码
-  const MS1 = Number(document.getElementById("SJL_MS1").value) || 0;
-  const MS2 = Number(document.getElementById("SJL_MS2").value) || 0;
-  const MS3 = Number(document.getElementById("SJL_MS3").value) || 0;
-  const MS4 = Number(document.getElementById("SJL_MS4").value) || 0;
-  const MS5 = Number(document.getElementById("SJL_MS5").value) || 0;
-  const MS6 = Number(document.getElementById("SJL_MS6").value) || 0;
+  const MS1 = getInputNumber("SJL_MS1");
+  const MS2 = getInputNumber("SJL_MS2");
+  const MS3 = getInputNumber("SJL_MS3");
+  const MS4 = getInputNumber("SJL_MS4");
+  const MS5 = getInputNumber("SJL_MS5");
+  const MS6 = getInputNumber("SJL_MS6");
 
   // 字 8: MVz(10位) + MS1~MS6(各1位，共6位)
   // MS1~MS6从第11位开始直到第16位
@@ -543,8 +550,7 @@ const loadCommand_SJL_SJCJ = () => {
   W[8] = 0x0000;
 
   // 字 10: M-TIME-TAG (LSB=1ms)
-  const M_TIME_TAG =
-    Number(document.getElementById("SJL_M-TIME-TAG").value) || 0;
+  const M_TIME_TAG = getInputNumber("SJL_M-TIME-TAG");
   W[9] = Math.round(M_TIME_TAG) & 0xffff;
 
   // --- 3. 将 16位字写入 ---
@@ -555,8 +561,8 @@ const loadCommand_SJL_SJCJ = () => {
   }
 
   // --- 4. 附加标志位 ---
-  const FLAG_TX = Number(document.getElementById("SJL_FLAG-TX").value) || 0;
-  const FLAG_LJ = Number(document.getElementById("SJL_FLAG-LJ").value) || 0;
+  const FLAG_TX = getInputNumber("SJL_FLAG-TX");
+  const FLAG_LJ = getInputNumber("SJL_FLAG-LJ");
   sendBuffer[36] = (FLAG_TX & 0x03) | ((FLAG_LJ & 0x01) << 2);
 
  
@@ -571,7 +577,7 @@ const loadCommand_SJL_SJCJ = () => {
   statusBar.sendMessage("发送数据链数据采集A帧", "0100H");
 };
 
-export const handle_SJL_SJCJ_Recv_0xFF = (data) => {
+export const handle_SJL_SJCJ_Recv_0xFF = (data: Uint8Array): void => {
   MBXX(data);
 
   // 数据链遥测 SJL_YC (2U, data[43], data[44])
@@ -595,23 +601,23 @@ export const handle_SJL_SJCJ_Recv_0xFF = (data) => {
   const tb = "tableWidget_SJL_SJCJ_recv_0xFF";
     const tb_YC = "tableWidget_SJL_SJCJ_recv_YC";
 
-    Utils.setTableCellText(tb_YC,  0, 1, CRC_Status);
-    Utils.setTableCellText(tb_YC,  1, 1, Antenna);
-    Utils.setTableCellText(tb_YC,  2, 1, Member_Match);
-    Utils.setTableCellText(tb_YC,  3, 1, SPL_Status);
-    Utils.setTableCellText(tb_YC,  4, 1, Sync_Status);
-    Utils.setTableCellText(tb_YC,  5, 1, HH_HK_Match);
-    Utils.setTableCellText(tb_YC,  6, 1, YC_Backup);
-    Utils.setTableCellText(tb_YC,  7, 1, SGDN);
-  Utils.setTableCellText(tb,  23, 1, TimeDiff);
-  Utils.setTableCellText(tb,  24, 1, PAPR);
-  Utils.setTableCellText(tb,  25, 1, FreqOffset);
-  Utils.setTableCellText(tb,  26, 1, AGC_Vol);
-  Utils.setTableCellText(tb,  27, 1, PowerEst);
+    Utils.setTableCellText(tb_YC,  0, 1, String(CRC_Status));
+    Utils.setTableCellText(tb_YC,  1, 1, String(Antenna));
+    Utils.setTableCellText(tb_YC,  2, 1, String(Member_Match));
+    Utils.setTableCellText(tb_YC,  3, 1, String(SPL_Status));
+    Utils.setTableCellText(tb_YC,  4, 1, String(Sync_Status));
+    Utils.setTableCellText(tb_YC,  5, 1, String(HH_HK_Match));
+    Utils.setTableCellText(tb_YC,  6, 1, String(YC_Backup));
+    Utils.setTableCellText(tb_YC,  7, 1, String(SGDN));
+  Utils.setTableCellText(tb,  23, 1, String(TimeDiff));
+  Utils.setTableCellText(tb,  24, 1, String(PAPR));
+  Utils.setTableCellText(tb,  25, 1, String(FreqOffset));
+  Utils.setTableCellText(tb,  26, 1, String(AGC_Vol));
+  Utils.setTableCellText(tb,  27, 1, String(PowerEst));
   statusBar.receiveMessage("收到数据链采集B帧","1000H");
 };
 
-export const handle_SJL_SJCJ_Recv_0x00 = (data) => {
+export const handle_SJL_SJCJ_Recv_0x00 = (data: Uint8Array): void => {
   MBXX(data);
 
   // 数据链遥测 SJL_YC (2U, data[43], data[44])
@@ -638,22 +644,22 @@ export const handle_SJL_SJCJ_Recv_0x00 = (data) => {
     const tb = "tableWidget_SJL_SJCJ_recv_0x00";
     const tb_YC = "tableWidget_SJL_SJCJ_recv_YC";
 
-    Utils.setTableCellText(tb_YC,  0, 1, CRC_Status);
-    Utils.setTableCellText(tb_YC,  1, 1, Antenna);
-    Utils.setTableCellText(tb_YC,  2, 1, Member_Match);
-    Utils.setTableCellText(tb_YC,  3, 1, SPL_Status);
-    Utils.setTableCellText(tb_YC, 4, 1, Sync_Status);
-    Utils.setTableCellText(tb_YC,  5, 1, HH_HK_Match);
-    Utils.setTableCellText(tb_YC,  6, 1, Datalink_Status);
-    Utils.setTableCellText(tb_YC,  7, 1, SGDN);
-  Utils.setTableCellText(tb,  23, 1, AD_Amp);
+    Utils.setTableCellText(tb_YC,  0, 1, String(CRC_Status));
+    Utils.setTableCellText(tb_YC,  1, 1, String(Antenna));
+    Utils.setTableCellText(tb_YC,  2, 1, String(Member_Match));
+    Utils.setTableCellText(tb_YC,  3, 1, String(SPL_Status));
+    Utils.setTableCellText(tb_YC, 4, 1, String(Sync_Status));
+    Utils.setTableCellText(tb_YC,  5, 1, String(HH_HK_Match));
+    Utils.setTableCellText(tb_YC,  6, 1, String(Datalink_Status));
+    Utils.setTableCellText(tb_YC,  7, 1, String(SGDN));
+  Utils.setTableCellText(tb,  23, 1, String(AD_Amp));
   Utils.setTableCellText(tb,  29, 1, PRN_Hex);
-  Utils.setTableCellText(tb,  30, 1, CurrentFreq);
+  Utils.setTableCellText(tb,  30, 1, String(CurrentFreq));
 
   statusBar.receiveMessage("收到数据链采集B帧","1000H");
 };
 
-const MBXX = (data) => {
+const MBXX = (data: Uint8Array): void => {
   // 构建16位字数组，根据小端模式(低字节在前，高字节在后)将相邻字节合并
   const W = new Uint16Array(21); // 下标 0~20 对应 Word 1~21
   for (let i = 0; i < 21; i++) {
@@ -661,9 +667,9 @@ const MBXX = (data) => {
   }
 
   // 有符号位扩展
-  const sign_extend_24 = (val) => (val & 0x800000 ? val - 0x1000000 : val);
-  const sign_extend_16 = (val) => (val & 0x8000 ? val - 0x10000 : val);
-  const sign_extend_10 = (val) => (val & 0x200 ? val - 0x400 : val);
+  const sign_extend_24 = (val: number): number => (val & 0x800000 ? val - 0x1000000 : val);
+  const sign_extend_16 = (val: number): number => (val & 0x8000 ? val - 0x10000 : val);
+  const sign_extend_10 = (val: number): number => (val & 0x200 ? val - 0x400 : val);
 
   // ===================================
   // 字 1
@@ -672,10 +678,10 @@ const MBXX = (data) => {
   const HH = (W[0] >> 8) & 0x1f;
   const HK = (W[0] >> 5) & 0x07;
   const AM = W[0] & 0x1f;
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 42, 1, TSF);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 0, 1, HH);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 1, 1, HK);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 2, 1, AM);
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 42, 1, String(TSF));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 0, 1, String(HH));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 1, 1, String(HK));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 2, 1, String(AM));
 
   // ===================================
   // 字 2
@@ -689,15 +695,15 @@ const MBXX = (data) => {
   const SDV = (W[1] >> 3) & 0x01;
   const AType = (W[1] >> 2) & 0x01;
   const TIED = W[1] & 0x03;
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 3, 1, GDN);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 4, 1, HRDCF);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 5, 1, PL);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 6, 1, PLV);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 7, 1, GC);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 8, 1, TN);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 44, 1, SDV);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 43, 1, AType);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 30, 1, TIED);
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 3, 1, String(GDN));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 4, 1, String(HRDCF));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 5, 1, String(PL));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 6, 1, String(PLV));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 7, 1, String(GC));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 8, 1, String(TN));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 44, 1, String(SDV));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 43, 1, String(AType));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 30, 1, String(TIED));
 
   // ===================================
   // 字 3 ~ 字 5: 目标经纬度
@@ -728,7 +734,7 @@ const MBXX = (data) => {
   // 字 6: 目标 THO
   // ===================================
   const THO = sign_extend_16(W[5]);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 11, 1, THO);
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 11, 1, String(THO));
 
   // ===================================
   // 字 7 ~ 字 9: 目标速度及对应准确度
@@ -772,8 +778,8 @@ const MBXX = (data) => {
     1,
     TVz.toFixed(1),
   );
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 19, 1, DEV);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 20, 1, DE);
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 19, 1, String(DEV));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 20, 1, String(DE));
 
   // ===================================
   // 字 10: HV / THPO / VEV / VE
@@ -782,15 +788,15 @@ const MBXX = (data) => {
   const THPO = ((W[9] >> 6) & 0x01ff) * 12.5;
   const VEV = (W[9] >> 5) & 0x01;
   const VE = (W[9] & 0x1f) * 25;
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 23, 1, HV);
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 23, 1, String(HV));
   Utils.setTableCellText(
     "tableWidget_SJL_SJCJ_recv_0xFF_MBXX",
     24,
     1,
     THPO.toFixed(1),
   );
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 21, 1, VEV);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 22, 1, VE);
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 21, 1, String(VEV));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 22, 1, String(VE));
 
   // ===================================
   // 字 11: 多个标志位
@@ -804,15 +810,15 @@ const MBXX = (data) => {
   const TC = (W[10] >> 4) & 0x07;
   const DIR = (W[10] >> 3) & 0x01;
   const TIR = W[10] & 0x07;
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 15, 1, AEV);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 17, 1, PEV);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 25, 1, LF);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 26, 1, DR);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 27, 1, TR);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 28, 1, DT);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 29, 1, TC);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 32, 1, DIR);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 31, 1, TIR);
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 15, 1, String(AEV));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 17, 1, String(PEV));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 25, 1, String(LF));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 26, 1, String(DR));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 27, 1, String(TR));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 28, 1, String(DT));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 29, 1, String(TC));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 32, 1, String(DIR));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 31, 1, String(TIR));
 
   // ===================================
   // 字 12 ~ 字 14: 被攻击机 (或制导机) 经纬度
@@ -843,7 +849,7 @@ const MBXX = (data) => {
   // 字 15: 被攻击机 H0
   // ===================================
   const P_HO = sign_extend_16(W[14]);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 35, 1, P_HO);
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 35, 1, String(P_HO));
 
   // ===================================
   // 字 16 ~ 字 19: 被攻击机速度及加速度 (非常规穿插打包)
@@ -903,16 +909,16 @@ const MBXX = (data) => {
     1,
     AccZ.toFixed(1),
   );
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 45, 1, SD);
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 45, 1, String(SD));
 
   // ===================================
   // 字 20 和 字 21: 时标
   // ===================================
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 46, 1, W[19]);
-  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 47, 1, W[20]);
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 46, 1, String(W[19]));
+  Utils.setTableCellText("tableWidget_SJL_SJCJ_recv_0xFF_MBXX", 47, 1, String(W[20]));
 };
 
-export const loadCommand_SJLTB_A = () => {
+export const loadCommand_SJLTB_A = (): void => {
     sendBuffer[0] = 0x31;
     sendBuffer[1] = 0x02;
     sendBuffer[2] = 0x01;
@@ -932,17 +938,16 @@ export const loadCommand_SJLTB_A = () => {
   const offset = 16;
 
   // 1. 载机编号和数据链通道号 HHK (2U)
-  const channel = Number(document.getElementById("CP_T_Channel").value) || 0; // bit0-3
-  const aircraftId =
-    Number(document.getElementById("CP_T_AircraftId").value) || 0; // bit4-8
-  const tsfFlag = Number(document.getElementById("CP_T_TSFFlag").value) || 0; // bit9-11
+  const channel = getInputNumber("CP_T_Channel"); // bit0-3
+  const aircraftId = getInputNumber("CP_T_AircraftId"); // bit4-8
+  const tsfFlag = getInputNumber("CP_T_TSFFlag"); // bit9-11
   const HHK =
     (channel & 0x0f) | ((aircraftId & 0x1f) << 4) | ((tsfFlag & 0x07) << 9);
   sendBuffer[offset] = HHK & 0xff;
   sendBuffer[offset + 1] = (HHK >> 8) & 0xff;
 
   // 2. 发送同步命令帧时刻 Time0 (4U) - 比例尺 40us
-  const Time0_UI = Number(document.getElementById("CP_T_Time0").value) || 0;
+  const Time0_UI = getInputNumber("CP_T_Time0");
   const Time0 = Math.round(Time0_UI / 40) >>> 0;
   sendBuffer[offset + 2] = Time0 & 0xff;
   sendBuffer[offset + 3] = (Time0 >> 8) & 0xff;
@@ -950,7 +955,7 @@ export const loadCommand_SJLTB_A = () => {
   sendBuffer[offset + 5] = (Time0 >> 24) & 0xff;
 
   // 3. 伪随机数产生时间 Time23 (4U) - 比例尺 40us
-  const Time23_UI = Number(document.getElementById("CP_T_Time23").value) || 0;
+  const Time23_UI = getInputNumber("CP_T_Time23");
   const Time23 = Math.round(Time23_UI / 40) >>> 0;
   sendBuffer[offset + 6] = Time23 & 0xff;
   sendBuffer[offset + 7] = (Time23 >> 8) & 0xff;
@@ -959,14 +964,14 @@ export const loadCommand_SJLTB_A = () => {
 
   // 4~9. 工作频点 CS1 ~ CS6 (各 2U)
   for (let i = 0; i < 6; i++) {
-    const csVal = Number(document.getElementById(`CP_T_CS${i + 1}`).value) || 0;
+    const csVal = getInputNumber(`CP_T_CS${i + 1}`);
     const val = csVal === 166 ? 0xa6a6 : csVal & 0xffff;
     sendBuffer[offset + 10 + i * 2] = val & 0xff;
     sendBuffer[offset + 11 + i * 2] = (val >> 8) & 0xff;
   }
 
   // 10. 跳频起始位置 POS (2U)
-  const POS = Number(document.getElementById("CP_T_POS").value) || 0;
+  const POS = getInputNumber("CP_T_POS");
   sendBuffer[offset + 22] = POS & 0xff;
   sendBuffer[offset + 23] = (POS >> 8) & 0xff;
 
@@ -974,15 +979,15 @@ export const loadCommand_SJLTB_A = () => {
   statusBar.sendMessage("发送数据链同步A帧(CP_T)", "成功");
 };
 
-export const handle_SJLTB_B = (data) => {
+export const handle_SJLTB_B = (data: Uint8Array): void => {
   statusBar.receiveMessage("收到数据链同步B帧","2000H");
-  Utils.setTableCellText("tableWidget_SJL_TB_B", 0, 1, data[0]||(data[1]<<8));
-  Utils.setTableCellText("tableWidget_SJL_TB_B", 1, 1, data[2]||(data[3]<<8));
-  Utils.setTableCellText("tableWidget_SJL_TB_B", 2, 1, data[4]||(data[5]<<8));
-  Utils.setTableCellText("tableWidget_SJL_TB_B", 3, 1, data[6]||(data[7]<<8));
-  Utils.setTableCellText("tableWidget_SJL_TB_B", 4, 1, data[8]||(data[9]<<8));
-  Utils.setTableCellText("tableWidget_SJL_TB_B", 5, 1, data[10]||(data[11]<<8));
-  Utils.setTableCellText("tableWidget_SJL_TB_B", 6, 1, data[12]||(data[13]<<8));
+  Utils.setTableCellText("tableWidget_SJL_TB_B", 0, 1, String(data[0]||(data[1]<<8)));
+  Utils.setTableCellText("tableWidget_SJL_TB_B", 1, 1, String(data[2]||(data[3]<<8)));
+  Utils.setTableCellText("tableWidget_SJL_TB_B", 2, 1, String(data[4]||(data[5]<<8)));
+  Utils.setTableCellText("tableWidget_SJL_TB_B", 3, 1, String(data[6]||(data[7]<<8)));
+  Utils.setTableCellText("tableWidget_SJL_TB_B", 4, 1, String(data[8]||(data[9]<<8)));
+  Utils.setTableCellText("tableWidget_SJL_TB_B", 5, 1, String(data[10]||(data[11]<<8)));
+  Utils.setTableCellText("tableWidget_SJL_TB_B", 6, 1, String(data[12]||(data[13]<<8)));
 }
 /*
 export const handle_SJLTB_A = (data) => {
