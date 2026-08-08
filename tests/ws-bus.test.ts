@@ -12,7 +12,7 @@ describe("broadcastTo", () => {
   it("向 OPEN 客户端发送 JSON.stringify 后的字符串", () => {
     const client = makeMockClient(WebSocket.OPEN);
     broadcastTo(new Set([client]), { type: "test", value: 1 });
-    expect((client as { send: { toHaveBeenCalledWith: (x: unknown) => void } }).send).toHaveBeenCalledWith(
+    expect((client as unknown as { send: { toHaveBeenCalledWith: (x: unknown) => void } }).send).toHaveBeenCalledWith(
       JSON.stringify({ type: "test", value: 1 }),
     );
   });
@@ -21,8 +21,8 @@ describe("broadcastTo", () => {
     const open = makeMockClient(WebSocket.OPEN);
     const closed = makeMockClient(WebSocket.CLOSED);
     broadcastTo(new Set([open, closed]), { type: "x" });
-    expect((open as { send: { toHaveBeenCalledTimes: (n: number) => void } }).send).toHaveBeenCalledTimes(1);
-    expect((closed as { send: { toHaveBeenCalled: () => void } }).send).not.toHaveBeenCalled();
+    expect((open as unknown as { send: { toHaveBeenCalledTimes: (n: number) => void } }).send).toHaveBeenCalledTimes(1);
+    expect((closed as unknown as { send: { toHaveBeenCalled: () => void } }).send).not.toHaveBeenCalled();
   });
 
   it("空集合不报错", () => {
@@ -35,13 +35,13 @@ describe("broadcastBinaryTo", () => {
     const client = makeMockClient(WebSocket.OPEN);
     const buf = Buffer.from([1, 2, 3]);
     broadcastBinaryTo(new Set([client]), buf);
-    expect((client as { send: { toHaveBeenCalledWith: (x: unknown) => void } }).send).toHaveBeenCalledWith(buf);
+    expect((client as unknown as { send: { toHaveBeenCalledWith: (x: unknown) => void } }).send).toHaveBeenCalledWith(buf);
   });
 
   it("跳过非 OPEN 客户端", () => {
     const closed = makeMockClient(WebSocket.CLOSED);
     broadcastBinaryTo(new Set([closed]), Buffer.from([1]));
-    expect((closed as { send: { toHaveBeenCalled: () => void } }).send).not.toHaveBeenCalled();
+    expect((closed as unknown as { send: { toHaveBeenCalled: () => void } }).send).not.toHaveBeenCalled();
   });
 
   it("空集合不报错", () => {

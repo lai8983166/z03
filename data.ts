@@ -247,7 +247,7 @@ export function createData(opts: DataOptions): DataController {
       const doSend = () => {
         _psWorkerPending = resolve;
         try {
-          _psWorker.stdin!.write(req + "\n", "utf8");
+          _psWorker!.stdin!.write(req + "\n", "utf8");
         } catch (e) {
           console.error("[Server] 写入 PowerShell worker 失败:", e);
           _psWorkerPending = null;

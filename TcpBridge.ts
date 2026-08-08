@@ -140,7 +140,7 @@ class TcpBridge extends EventEmitter {
             this.isConnected = false;
         });
 
-        this.socket.bind(this.localPort);
+        this.socket.bind(this.localPort!);
     }
 
     connectWS(): void {
@@ -165,7 +165,9 @@ class TcpBridge extends EventEmitter {
         });*/
 
         this.client.on("open", () => {
+            // @ts-expect-error ws 内部 _socket（net.Socket），调 setNoDelay 禁用 Nagle；@types/ws 8.x 未暴露此字段
             if (this.client._socket && this.client._socket.setNoDelay) {
+                // @ts-expect-error 同上
                 this.client._socket.setNoDelay(true);
                 //console.log("已禁用nagle!!!!");
             }

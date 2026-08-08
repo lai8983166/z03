@@ -8,53 +8,59 @@
 
 import fs from "fs";
 
-/**
- * @typedef {Object} BridgeConfig
- * @property {boolean} useTcp
- * @property {string} localIp
- * @property {number} localPort
- * @property {string} remoteIp
- * @property {number} remotePort
- */
+interface BridgeConfig {
+  useTcp: boolean;
+  localIp: string;
+  localPort: number;
+  remoteIp: string;
+  remotePort: number;
+}
 
-/**
- * @typedef {Object} Config
- * @property {{ port: number }} http
- * @property {{ port: number, portImg: number }} ws
- * @property {{ remoteIp: string, remotePort: number }} imageUpload
- * @property {[BridgeConfig, BridgeConfig, BridgeConfig]} bridges
- * @property {{ serialPort: string, baudRate: number }} turntable
- * @property {{ rtspUrl: string, binarizedRtspUrl: string, ffmpegPath: string, srcWidth: number, srcHeight: number, bytesPerPixel16bit: number }} video
- * @property {string} dataDir
- */
+interface Config {
+  http: { port: number };
+  ws: { port: number; portImg: number };
+  imageUpload: { remoteIp: string; remotePort: number };
+  bridges: [BridgeConfig, BridgeConfig, BridgeConfig];
+  turntable: { serialPort: string; baudRate: number };
+  video: {
+    rtspUrl: string;
+    binarizedRtspUrl: string;
+    ffmpegPath: string;
+    srcWidth: number;
+    srcHeight: number;
+    bytesPerPixel16bit: number;
+  };
+  dataDir: string;
+}
 
 /**
  * 校验配置对象，返回错误信息数组（空数组表示通过）。
  * 纯函数，不触碰文件系统，便于单元测试。
- * @param {unknown} c
- * @returns {string[]}
  */
-function validateConfig(c) {
-  const errors = [];
+function validateConfig(c: unknown): string[] {
+  const errors: string[] = [];
   if (typeof c !== "object" || c === null || Array.isArray(c)) {
     return ["配置根必须是对象"];
   }
-  const cfg = c;
+  const cfg = c as Record<string, unknown>;
 
-  const need = (obj, key, type, path) => {
+  const need = (obj: unknown, key: string, type: string, path: string) => {
     const label = path ? `${path}.${key}` : key;
-    if (!(key in obj)) {
+    if (typeof obj !== "object" || obj === null || !(key in obj)) {
       errors.push(`${label} 缺失`);
-    } else if (typeof obj[key] !== type) {
-      errors.push(`${label} 必须是 ${type}（实际: ${typeof obj[key]}）`);
+    } else if (typeof (obj as Record<string, unknown>)[key] !== type) {
+      errors.push(`${label} 必须是 ${type}（实际: ${typeof (obj as Record<string, unknown>)[key]}）`);
     }
   };
-  const needObj = (obj, key, path) => {
+  const needObj = (obj: unknown, key: string, path: string) => {
     const label = path ? `${path}.${key}` : key;
-    if (!(key in obj)) {
+    if (typeof obj !== "object" || obj === null || !(key in obj)) {
       errors.push(`${label} 缺失`);
-    } else if (typeof obj[key] !== "object" || obj[key] === null || Array.isArray(obj[key])) {
-      errors.push(`${label} 必须是对象`);
+    } else {
+      const v = (obj as Record<string, unknown>)[key];
+      if (typeof v !== "object" || v === null || Array.isArray(v)) {
+        errors.push(`${label} 必须是对象`);
+      }
     }
   };
 
@@ -76,7 +82,7 @@ function validateConfig(c) {
   if (!Array.isArray(cfg.bridges) || cfg.bridges.length !== 3) {
     errors.push("bridges 必须是长度为 3 的数组");
   } else {
-    cfg.bridges.forEach((/** @type {unknown} */ b, i) => {
+    cfg.bridges.forEach((b: unknown, i: number) => {
       const p = `bridges[${i}]`;
       if (typeof b !== "object" || b === null || Array.isArray(b)) {
         errors.push(`${p} 必须是对象`);
@@ -114,32 +120,30 @@ function validateConfig(c) {
 /**
  * 加载并校验配置文件。
  * 文件缺失 / JSON 解析失败 / 关键字段校验失败时抛出 Error。
- * @param {string} configPath
- * @returns {Config}
  */
-function loadConfig(configPath) {
+function loadConfig(configPath: string): Config {
   if (!fs.existsSync(configPath)) {
     throw new Error(
       `[config] 配置文件不存在: ${configPath}（可从 config.example.json 复制一份为 config.json 后修改）`,
     );
   }
-  let raw;
+  let raw: string;
   try {
     raw = fs.readFileSync(configPath, "utf8");
   } catch (e) {
-    throw new Error(`[config] 配置文件读取失败: ${configPath} - ${/** @type {Error} */ (e).message}`);
+    throw new Error(`[config] 配置文件读取失败: ${configPath} - ${(e as Error).message}`);
   }
-  let parsed;
+  let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    throw new Error(`[config] 配置文件 JSON 解析失败: ${configPath} - ${/** @type {Error} */ (e).message}`);
+    throw new Error(`[config] 配置文件 JSON 解析失败: ${configPath} - ${(e as Error).message}`);
   }
   const errors = validateConfig(parsed);
   if (errors.length > 0) {
     throw new Error(`[config] 配置文件校验失败 (${configPath}):\n  - ${errors.join("\n  - ")}`);
   }
-  return /** @type {Config} */ (parsed);
+  return parsed as Config;
 }
 
 export { loadConfig, validateConfig };

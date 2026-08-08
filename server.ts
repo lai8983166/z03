@@ -29,7 +29,7 @@ const server = http.createServer((req, res) => {
   }
 
   const extname = String(path.extname(filePath)).toLowerCase();
-  const mimeTypes = {
+  const mimeTypes: Record<string, string> = {
     ".html": "text/html",
     ".js": "text/javascript",
     ".css": "text/css",
@@ -203,7 +203,7 @@ wss.on("connection", (ws) => {
     }
 
     try {
-      const data = JSON.parse(message);
+      const data = JSON.parse(message.toString());
       console.log("[MSG] [WebSocket] 文本消息:", data.type);
 
       // 处理控制消息（如 ping/pong）
@@ -216,7 +216,7 @@ wss.on("connection", (ws) => {
         }`,
       );*/
 
-      bridges.sendToBridge1(message);
+      bridges.sendToBridge1(message as Buffer);
     }
   });
 
