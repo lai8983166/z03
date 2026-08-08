@@ -1,18 +1,15 @@
-// @ts-nocheck: 见 server.ts 顶部说明（后端 .ts 过渡，类型收紧留后续 change）。
 import WebSocket from "ws";
 import dgram from "dgram";
 import { EventEmitter } from "events";
 
-/**
- * @typedef {Object} CmdDef
- * @property {number} cmd1 - 命令字低位
- * @property {number} cmd2 - 命令字高位
- * @property {number} flag - 路由标识（对应前端 DataHandler 的 switch case）
- * @property {number} len - 期望数据体长度（字节）
- */
+interface CmdDef {
+    cmd1: number;
+    cmd2: number;
+    flag: number;
+    len: number;
+}
 
-/** @type {{ [name: string]: CmdDef }} */
-const CMD_54 = {
+const CMD_54: Record<string, CmdDef> = {
     FJYJZ: { cmd1: 0x00, cmd2: 0x20, flag: 0, len: 1 }, // 非均匀校正 2000H
     FJYJZ_0020: { cmd1: 0x20, cmd2: 0x00, flag: 27, len: 1 }, // 非均匀校正 0020H
     SELF_TEST: { cmd1: 0x01, cmd2: 0x00, flag: 2, len: 0 }, // 自检 0001H
@@ -20,7 +17,7 @@ const CMD_54 = {
     BBH: { cmd1: 0x20, cmd2: 0x00, flag: 5, len: 48 }, // 软件版本 0020H
     CMD_3000H: { cmd1: 0x00, cmd2: 0x30, flag: 6, len: 2 }, // 3000H
     NUC_CORRECT: { cmd1: 0x00, cmd2: 0x70, flag: 7, len: 1 }, // 非均匀校正 7000H
-    
+
 
     //CSZD_Recv_0200H: { cmd1: 0x00, cmd2: 0x02, flag: 11, len: 1040 }, // 参数装订 0200H
     ONE_CMD: { cmd1: 0x08, cmd2: 0x00, flag: 12, len: 1 }, // 一次指令 0008H
@@ -39,7 +36,7 @@ const CMD_54 = {
     YC_DATA:{ cmd1: 0x01, cmd2: 0xa0, flag: 26, len: 1040},//遥测数据A001H
 };
 
-const CMD_32 = {
+const CMD_32: Record<string, CmdDef> = {
     SELF_TEST: { cmd1: 0x01, cmd2: 0x00, flag: 30, len: 1 }, // 要求从站自检 0001H
     SELF_TEST_RES: { cmd1: 0x10, cmd2: 0x00, flag: 31, len: 1 }, // 取从站自检结果 0010H
     BBH: { cmd1: 0x20, cmd2: 0x00, flag: 32, len: 0 }, // 取版本号 0020H
@@ -47,7 +44,7 @@ const CMD_32 = {
     WAKE: { cmd1: 0x00, cmd2: 0x20, flag: 34, len: 30 }, // 唤醒 2000H
 };
 
-const CMD_4A = {
+const CMD_4A: Record<string, CmdDef> = {
     SJL_SJCJ_B: { cmd1: 0x00, cmd2: 0x10, flag: 40, len: 1 }, // 取数据链数据采集B帧 1000H
     SJL_TB_B: { cmd1: 0x00, cmd2: 0x20, flag: 41, len: 1 }, // 取数据链同步B帧 2000H
     SJL_SJCJ_A: { cmd1: 0x00, cmd2: 0x01, flag: 42, len: 1 }, // 取数据链数据采集A帧 1000H
@@ -55,15 +52,15 @@ const CMD_4A = {
 };
 
 // 6000H 上传协议使用表4中的站地址，不能按原有 54H/32H/4AH 命令表路由。
-const CODE_UPLOAD_6000H_AR = new Set([0xa0, 0x68, 0x32, 0x77, 0x55, 0x56]);
+const CODE_UPLOAD_6000H_AR = new Set<number>([0xa0, 0x68, 0x32, 0x77, 0x55, 0x56]);
 const CODE_UPLOAD_6000H_CO = 0x6000;
 
-/** @type {number} 6000H 代码上传计数（connectWS 收消息时递增，调试用） */
-let upload_count_6000h=0;
-/** @type {boolean} heixiazi（黑匣子）协议状态标志，由 handleData 维护 */
-let heixiazi_flag = false;
-/** @type {boolean} YC 遥测协议状态标志 */
-let yc_flag=false;
+/** 6000H 代码上传计数（connectWS 收消息时递增，调试用） */
+let upload_count_6000h: number = 0;
+/** heixiazi（黑匣子）协议状态标志，由 handleData 维护 */
+let heixiazi_flag: boolean = false;
+/** YC 遥测协议状态标志 */
+let yc_flag: boolean = false;
 
 /**
  * UDP / WebSocket 双模桥接器：根据 mode 选择 bindUDP 或 connectWS 建立
@@ -72,6 +69,16 @@ let yc_flag=false;
  * 作为三路 bridge 的 transport（UdpBridge 是其 UDP-only 备选，未启用）。
  */
 class TcpBridge extends EventEmitter {
+    mode: 'ws' | 'udp';
+    client: WebSocket | null;
+    socket: dgram.Socket | null;
+    localPort: number | null;
+    remoteIP: string | null;
+    remotePort: number | null;
+    isConnected: boolean;
+    shouldReconnect: boolean;
+    recvBuffer: Buffer;
+
     constructor() {
         super();
         this.mode = 'ws';       // 'ws' 或 'udp'
@@ -85,7 +92,7 @@ class TcpBridge extends EventEmitter {
         this.recvBuffer = Buffer.alloc(0);
     }
 
-    init(localIP, localPort, remoteIP, remotePort, mode = 'ws') {
+    init(localIP: string, localPort: number, remoteIP: string, remotePort: number, mode: 'ws' | 'udp' = 'ws'): void {
         this.mode = mode;
         this.localPort = localPort;
         this.remoteIP = remoteIP;
@@ -98,7 +105,7 @@ class TcpBridge extends EventEmitter {
         }
     }
 
-    bindUDP() {
+    bindUDP(): void {
         if (this.socket) {
             this.socket.close();
             this.socket = null;
@@ -106,13 +113,13 @@ class TcpBridge extends EventEmitter {
         this.socket = dgram.createSocket('udp4');
 
         this.socket.on('listening', () => {
-            const addr = this.socket.address();
+            const addr = this.socket!.address();
             console.log(`[UDP] 监听 ${addr.address}:${addr.port}`);
             this.isConnected = true;
             this.emit('ready');
         });
 
-        this.socket.on('message', (msg, rinfo) => {
+        this.socket.on('message', (msg: Buffer, rinfo) => {
             //console.log("收到数据");
             // 转台 ASCII 帧透传
             const rawText = msg.toString('utf8');
@@ -136,7 +143,7 @@ class TcpBridge extends EventEmitter {
         this.socket.bind(this.localPort);
     }
 
-    connectWS() {
+    connectWS(): void {
         console.log("ws conn");
         if (this.client) {
             this.client.removeAllListeners();
@@ -168,15 +175,15 @@ class TcpBridge extends EventEmitter {
             this.emit("ready");
         })
 
-        this.client.on("message", (data) => {
+        this.client.on("message", (data: Buffer) => {
             //console.log("数据来源类型：", Buffer.isBuffer(data));
             //const buffer=Buffer.isBuffer(data)?data:Buffer.from(data)
-            
+
             //console.log("isBuffer::::::", Buffer.isBuffer(data));
             try {
                 //const str = Buffer.isBuffer(data) ? data.toString('utf8') : data;
                 //const obj = JSON.parse(str);
-                
+
                 //const msg = Buffer.from(obj.data, 'base64');
 
                 // ---- 转台 ASCII 帧透传：若收到的是可打印文本（以 $ 开头），emit raw_text ----
@@ -210,7 +217,7 @@ class TcpBridge extends EventEmitter {
             console.log("链接失败", err);
         });
 
-        
+
 
     }
 
@@ -221,17 +228,13 @@ class TcpBridge extends EventEmitter {
      * 本方法是纯解析逻辑（通过 this.emit 输出），不直接读写 socket——
      * 单元测试通过构造 `new TcpBridge()` + 监听 emit + 喂构造 Buffer 验证，
      * 不需要调用 init/bindUDP/connectWS。
-     *
-     * @param {Buffer | Uint8Array} msg 原始报文字节（要求长度 >= 16、头 0x13 0x02）
-     * @param {number} [port] 来源端口（用于区分 localPort==30042 的 YC 分支）
-     * @returns {void}
      */
-    handleData(msg,port) {
+    handleData(msg: Buffer, port?: number): void {
         //console.log(
         //    `[RECV]handleData received ${data.length} bytes from ${data.address}:${data.port}`,
         //);
         /*this.recvBuffer = Buffer.concat([this.recvBuffer, data]);
-        
+
         while (this.recvBuffer.length >= 16) {
             const payloadLength = this.readUInt16LE(6);
             const totalPacketLength = 16 + payloadLength;
@@ -249,7 +252,7 @@ class TcpBridge extends EventEmitter {
                 },
             });
         }*/
-        
+
         /*const base64Str = data.toString('utf8');
         console.log("base64Str:::::", base64Str);
         const jsonStr = Buffer.from(base64Str, 'base64').toString('utf8');
@@ -264,7 +267,7 @@ class TcpBridge extends EventEmitter {
         /*const HexString = Array.from(msg)
             .map((byte) => byte.toString(16).padStart(2, "0").toUpperCase())
             .join(" ");
-        
+
         console.log(HexString);*/
         if (msg[0] == 0x13 && msg[1]== 0x00) {
             heixiazi_flag = true;
@@ -276,19 +279,19 @@ class TcpBridge extends EventEmitter {
 
             const data = msg;
            //console.log("data",msg);
-            
-            
+
+
             if (heixiazi_flag == true) { this.emit("heixiazi", { data}); return;}
-            
+
         }
         /*const HexString = Array.from(msg)
             .map((byte) => byte.toString(16).padStart(2, "0").toUpperCase())
             .join(" ");
 
         console.log(HexString);*/
-        
+
         if (msg.length < 16 || msg[0] !== 0x13 || msg[1] !== 0x02) {
-            return; 
+            return;
         }
         if (this.localPort == 30042) {
             //if(msg[14]==0x00&&msg[12]==0x11){yc_flag=true;}
@@ -296,16 +299,16 @@ class TcpBridge extends EventEmitter {
             //console.log("msg", msg);
 
             const data = payload;
-            
+
                 this.emit("YC", { data });
                 return;
-            
+
         }
 
         // 提取命令字 (CMD)
         const cmd1 = msg[14];
         const cmd2 = msg[15];
-        
+
         const AR = msg[13];
         // 提取数据体，统一从 16 开始
         const payload = msg.subarray(16);
@@ -335,7 +338,7 @@ class TcpBridge extends EventEmitter {
                 },
             });
 
-            
+
             return;
         }
 
@@ -344,7 +347,7 @@ class TcpBridge extends EventEmitter {
             this.emit("SJCJ_trigger"); // 触发周期采集
             return;
         }*/
-        let CMD = null;
+        let CMD: Record<string, CmdDef> | null = null;
 
         if (AR === 0x54) {
             CMD = CMD_54;
@@ -384,10 +387,10 @@ class TcpBridge extends EventEmitter {
         // 未知命令
       //console.log(`[UDP] Unknown CMD: 0x${cmd1.toString(16)} 0x${cmd2.toString(16)}`);
 
-        
+
     }
 
-    sendPacket(buffer) {
+    sendPacket(buffer: Buffer): void {
         if (this.mode === 'udp') {
             this.sendUDP(buffer);
         } else {
@@ -395,12 +398,12 @@ class TcpBridge extends EventEmitter {
         }
     }
 
-    sendUDP(buffer) {
+    sendUDP(buffer: Buffer): void {
         if (!this.socket || !this.isConnected) {
             console.log("[UDP] 未绑定，发送失败");
             return;
         }
-        this.socket.send(buffer, this.remotePort, this.remoteIP, (err) => {
+        this.socket.send(buffer, this.remotePort!, this.remoteIP!, (err) => {
             if (err) {
                 console.log("[UDP] 发送失败", err.message);
                 this.emit("error", err);
@@ -408,7 +411,7 @@ class TcpBridge extends EventEmitter {
         });
     }
 
-    sendWS(buffer) {
+    sendWS(buffer: Buffer): void {
         if (!this.client || !this.isConnected) {
             console.log("tcp未连接，发送失败");
             return;
@@ -433,7 +436,7 @@ class TcpBridge extends EventEmitter {
         });
     }
 
-    close() {
+    close(): void {
         this.shouldReconnect = false;
         if (this.mode === 'udp') {
             if (this.socket) {

@@ -1,17 +1,14 @@
-// @ts-nocheck: 见 server.ts 顶部说明（后端 .ts 过渡，类型收紧留后续 change）。
 import dgram from "dgram";
 import { EventEmitter } from "events";
 
-/**
- * @typedef {Object} CmdDef
- * @property {number} cmd1 - 命令字低位
- * @property {number} cmd2 - 命令字高位
- * @property {number} flag - 路由标识
- * @property {number} len - 期望数据体长度（字节）
- */
+interface CmdDef {
+  cmd1: number;
+  cmd2: number;
+  flag: number;
+  len: number;
+}
 
-/** @type {{ [name: string]: CmdDef }} */
-const CMD = {
+const CMD: Record<string, CmdDef> = {
   WAKE: { cmd1: 0x01, cmd2: 0x00, flag: 0, len: 1 }, // 唤醒 0001H
   SLEEP: { cmd1: 0x04, cmd2: 0x00, flag: 1, len: 1 }, // 休眠 0004H
   SELF_TEST: { cmd1: 0x02, cmd2: 0x00, flag: 2, len: 0 }, // 自检 0002H
@@ -34,7 +31,7 @@ const CMD = {
     CSZD_4000H: { cmd1: 0x00, cmd2: 0x40, flag: 22, len: 1040 },
 };
 
-let bufffer = new Array();
+let bufffer = new Array<Buffer>();
 
 /**
  * UDP-only 桥接器：绑定本地 UDP 端口，把收到的字节流交给 _handleMessage
@@ -42,6 +39,10 @@ let bufffer = new Array();
  * 本类未被实例化（遗留备选），随协议层补类型注解，调用关系不变。
  */
 class UdpBridge extends EventEmitter {
+  socket: dgram.Socket;
+  remote: { address: string; port: number } | null;
+  isBound: boolean;
+
   constructor() {
     super();
     this.socket = dgram.createSocket("udp4");
@@ -50,17 +51,17 @@ class UdpBridge extends EventEmitter {
   }
 
   // 初始化 UDP
-  init(localIp, localPort, remoteIp, remotePort) {
+  init(localIp: string, localPort: number, remoteIp: string, remotePort: number): void {
     this.remote = { address: remoteIp, port: remotePort };
 
     // 监听错误
-    this.socket.on("error", (err) => {
+    this.socket.on("error", (err: Error) => {
       console.error("[ERROR] UDP socket error:", err);
       this.emit("error", err);
     });
 
     // 监听接收到的数据
-    this.socket.on("message", (msg, rinfo) => {
+    this.socket.on("message", (msg: Buffer, rinfo) => {
       if (msg.length >= 16) {
         const cmd1 = msg[14];
         const cmd2 = msg[15];
@@ -98,7 +99,7 @@ class UdpBridge extends EventEmitter {
    *
    *
    */
-  sendPacket(buffer) {
+  sendPacket(buffer: Buffer): void {
     if (!this.remote || !this.remote.address || !this.remote.port) {
       console.error(" [UDP] Remote IP/Port not set");
       return;
@@ -130,12 +131,8 @@ class UdpBridge extends EventEmitter {
    * 解析一条 UDP 收到的原始报文并 emit 协议事件（rs485 / chart_update /
    * laser_data / SJCJ_trigger）。本方法是纯解析逻辑，不读写 socket——
    * 单元测试通过构造 `new UdpBridge()` + 监听 emit + 喂构造 Buffer 验证。
-   *
-   * @param {Buffer | Uint8Array} msg 原始报文字节（长度 >= 16、头 0x13 0x02）
-   * @param {{ address: string, port: number }} rinfo 来源信息
-   * @returns {void}
    */
-  _handleMessage(msg, rinfo) {
+  _handleMessage(msg: Buffer, rinfo: { address: string; port: number }): void {
     // 1. 基础校验 (12字节的规定)
     if (msg.length < 16 || msg[0] !== 0x13 || msg[1] !== 0x02) {
       return; // 丢弃无效包
@@ -185,7 +182,7 @@ class UdpBridge extends EventEmitter {
   }
 
   // 关闭 socket
-  close() {
+  close(): void {
     try {
       this.socket.close();
       console.log("[WS] UDP socket closed");

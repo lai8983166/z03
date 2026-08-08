@@ -5,7 +5,6 @@ import UdpBridge from "./js/Udp";
 /**
  * bridges 模块：3 路 UDP/TCP 桥接装配（事件监听 + init + close）。
  * 逐字搬迁自 server.ts Bridge 1/2/3。
- * TcpBridge/UdpBridge 自身 @ts-nocheck 类型不完整，实例用 any。
  */
 
 export interface BridgeConfig {
@@ -31,14 +30,41 @@ export interface BridgesController {
   sendToBridge1(buf: Buffer): void;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyBridge = any;
+/** rs485 事件 payload：flag/name/data 必有，meta 仅 CODE_UPLOAD_6000H 分支提供 */
+interface Rs485Info {
+  flag: number;
+  name: string;
+  data: Buffer;
+  meta?: { ar: number; at: number; co: number; command: number | null } | null;
+}
+
+/** heixiazi / YC 事件 payload：仅含 data */
+interface BinaryInfo {
+  data: Buffer;
+}
+
+/**
+ * Bridge 实例的统一接口（结构子类型）。TcpBridge 与 UdpBridge 都满足此接口：
+ * - `on` 继承自 EventEmitter
+ * - `init` 的 mode 参数可选（TcpBridge 接受 'ws'|'udp'，UdpBridge 不接受第 5 参）
+ * - `sendPacket` / `close` 两类桥签名一致
+ */
+interface Bridge {
+  on(event: string, listener: (...args: any[]) => void): this;
+  init(localIp: string, localPort: number, remoteIp: string, remotePort: number, mode?: string): void;
+  sendPacket(buf: Buffer): void;
+  close(): void;
+}
+
+function createBridge(cfg: BridgeConfig): Bridge {
+  return cfg.useTcp ? new TcpBridge() : new UdpBridge();
+}
 
 export function createBridges(opts: BridgesOptions): BridgesController {
   const { wsBus, bridges, onBridge1Ready } = opts;
 
   // --- Bridge 1 ---
-  const udpBridge: AnyBridge = bridges[0].useTcp ? new TcpBridge() : new UdpBridge();
+  const udpBridge = createBridge(bridges[0]);
 
   udpBridge.on("ready", () => {
     console.log("✅ UDP ready");
@@ -48,7 +74,7 @@ export function createBridges(opts: BridgesOptions): BridgesController {
     console.log("   已广播 udp_ready 消息，当前连接客户端数:", wsBus.clients.size);
   });
 
-  udpBridge.on("rs485", (info: AnyBridge) => {
+  udpBridge.on("rs485", (info: Rs485Info) => {
     wsBus.broadcast({
       type: "rs485",
       flag: info.flag,
@@ -58,14 +84,14 @@ export function createBridges(opts: BridgesOptions): BridgesController {
     });
   });
 
-  udpBridge.on("heixiazi", (info: AnyBridge) => {
+  udpBridge.on("heixiazi", (info: BinaryInfo) => {
     const packet = Buffer.allocUnsafe(1 + info.data.length);
     packet[0] = 0x03;
     info.data.copy(packet, 1);
     wsBus.broadcastBinary(packet);
   });
 
-  udpBridge.on("YC", (info: AnyBridge) => {
+  udpBridge.on("YC", (info: BinaryInfo) => {
     const packet = Buffer.allocUnsafe(1 + info.data.length);
     packet[0] = 0x04;
     info.data.copy(packet, 1);
@@ -84,7 +110,7 @@ export function createBridges(opts: BridgesOptions): BridgesController {
     wsBus.broadcast({ type: "SJCJ_trigger" });
   });
 
-  udpBridge.on("received", (info: AnyBridge) => {
+  udpBridge.on("received", (info: { data: Buffer; from: { address: string; port: number } }) => {
     console.log("📩 UDP 收到数据，准备广播...");
     wsBus.broadcast({ type: "udp_received", data: info.data.toString("hex"), from: info.from });
   });
@@ -103,14 +129,14 @@ export function createBridges(opts: BridgesOptions): BridgesController {
   udpBridge.init(bridges[0].localIp, bridges[0].localPort, bridges[0].remoteIp, bridges[0].remotePort, "udp");
 
   // --- Bridge 2 ---
-  const udpBridge2: AnyBridge = bridges[1].useTcp ? new TcpBridge() : new UdpBridge();
+  const udpBridge2 = createBridge(bridges[1]);
 
   udpBridge2.on("ready", () => {
     console.log("✅ Bridge2 ready");
     wsBus.broadcast({ type: "udp2_ready", message: "Bridge2 connected" });
   });
 
-  udpBridge2.on("rs485", (info: AnyBridge) => {
+  udpBridge2.on("rs485", (info: Rs485Info) => {
     wsBus.broadcast({
       type: "rs485_2", flag: info.flag, name: info.name,
       data: info.data ? info.data.toString("hex") : null,
@@ -118,14 +144,14 @@ export function createBridges(opts: BridgesOptions): BridgesController {
     });
   });
 
-  udpBridge2.on("heixiazi", (info: AnyBridge) => {
+  udpBridge2.on("heixiazi", (info: BinaryInfo) => {
     const packet = Buffer.allocUnsafe(1 + info.data.length);
     packet[0] = 0x03;
     info.data.copy(packet, 1);
     wsBus.broadcastBinary(packet);
   });
 
-  udpBridge2.on("YC", (info: AnyBridge) => {
+  udpBridge2.on("YC", (info: BinaryInfo) => {
     const packet = Buffer.allocUnsafe(1 + info.data.length);
     packet[0] = 0x04;
     info.data.copy(packet, 1);
@@ -148,14 +174,14 @@ export function createBridges(opts: BridgesOptions): BridgesController {
   udpBridge2.init(bridges[1].localIp, bridges[1].localPort, bridges[1].remoteIp, bridges[1].remotePort, "udp");
 
   // --- Bridge 3 ---
-  const udpBridge3: AnyBridge = bridges[2].useTcp ? new TcpBridge() : new UdpBridge();
+  const udpBridge3 = createBridge(bridges[2]);
 
   udpBridge3.on("ready", () => {
     console.log("✅ Bridge3 ready");
     wsBus.broadcastImg({ type: "udp3_ready", message: "Bridge3 connected" });
   });
 
-  udpBridge3.on("heixiazi", (info: AnyBridge) => {
+  udpBridge3.on("heixiazi", (info: BinaryInfo) => {
     const packet = Buffer.allocUnsafe(1 + info.data.length);
     packet[0] = 0x03;
     info.data.copy(packet, 1);
