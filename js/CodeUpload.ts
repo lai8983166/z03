@@ -641,7 +641,7 @@ const loadCommand_CXSC_Code_Write_9000H = (): void => {
 
 export const handle_CXSC_Code_Write_9000H = (data: Uint8Array): void => {
     //statusBar.receiveMessage("烧写状态回复", "9000H");
-    if ((data[0] = 0x65, data[1] == 0x06)) {
+    if (data[0] == 0x65 && data[1] == 0x06) {
         if (data[2] == 0x01) {
             statusBar.receiveMessage("烧写进行中", "9000H");
         } else if (data[2] == 0x02) {
