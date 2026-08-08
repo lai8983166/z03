@@ -6,24 +6,43 @@
  * 接收到的 rs485 消息（flag=19）直接分发给 ImageUpload.js 注册的处理函数。
  */
 
-/** @type {((data: Uint8Array) => void) | null} 握手应答处理函数 */
-let _onHandshakeAck = null;
-/** @type {((data: Uint8Array) => void) | null} 每包应答处理函数 */
-let _onPerFrameAck = null;
+/** ws-bus 文本消息的通用 payload 形状 */
+interface ImgWsMessage {
+  type: string;
+  flag?: number;
+  name?: string;
+  data?: string;
+  message?: string;
+  [key: string]: unknown;
+}
+
+/** 每包/握手应答回调签名 */
+type AckCallback = (data: Uint8Array) => void;
+
+/** 事件回调签名 */
+type EventCallback = (data: unknown) => void;
+
+/** 握手应答处理函数 */
+let _onHandshakeAck: AckCallback | null = null;
+/** 每包应答处理函数 */
+let _onPerFrameAck: AckCallback | null = null;
 
 /**
  * 注册握手应答（flag=19, name=IMAGE_UPLOAD_0B00H, data[0..1]=0x15,0x06）回调
- * @param {(data: Uint8Array) => void} fn
  */
-export function setOnHandshakeAck(fn) { _onHandshakeAck = fn; }
+export function setOnHandshakeAck(fn: AckCallback): void { _onHandshakeAck = fn; }
 
 /**
  * 注册每包应答（flag=19, name=IMAGE_UPLOAD_0B00H, data[0..1]=0x40,0x06）回调
- * @param {(data: Uint8Array) => void} fn
  */
-export function setOnPerFrameAck(fn) { _onPerFrameAck = fn; }
+export function setOnPerFrameAck(fn: AckCallback): void { _onPerFrameAck = fn; }
 
 class ImageUploadWSClient {
+  url: string;
+  ws: WebSocket | null;
+  isConnected: boolean;
+  _subscribers: Record<string, EventCallback[]>;
+
   constructor() {
     const host = window.location.hostname || "192.168.10.2";
     this.url = `ws://${host}:8082`;
@@ -32,7 +51,7 @@ class ImageUploadWSClient {
     this._subscribers = {};
   }
 
-  connect() {
+  connect(): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
 
     this.ws = new WebSocket(this.url);
@@ -44,14 +63,14 @@ class ImageUploadWSClient {
       this._emit("connected");
     };
 
-    this.ws.onmessage = (event) => {
+    this.ws.onmessage = (event: MessageEvent) => {
       if (event.data instanceof ArrayBuffer) {
         // 图像上传通道暂不期望收到二进制消息，忽略
         return;
       }
       if (typeof event.data === "string") {
         try {
-          const msg = JSON.parse(event.data);
+          const msg = JSON.parse(event.data) as ImgWsMessage;
           this._handleMessage(msg);
         } catch (e) {
           console.error("[IMG-WS] 消息解析失败:", e);
@@ -66,12 +85,12 @@ class ImageUploadWSClient {
       setTimeout(() => this.connect(), 3000);
     };
 
-    this.ws.onerror = (err) => {
+    this.ws.onerror = (err: Event) => {
       console.error("[IMG-WS] WebSocket 错误:", err);
     };
   }
 
-  _handleMessage(msg) {
+  _handleMessage(msg: ImgWsMessage): void {
     if (msg.type === "rs485" && msg.flag === 19) {
       const dataBytes = msg.data ? this._hexToBytes(msg.data) : null;
       if (!dataBytes || dataBytes.length < 2) return;
@@ -96,35 +115,33 @@ class ImageUploadWSClient {
 
   /**
    * 发送二进制 UDP 数据包（图像上传帧/握手包）
-   * @param {Uint8Array} uint8Array
-   * @returns {boolean}
    */
-  sendUdp(uint8Array) {
+  sendUdp(uint8Array: Uint8Array): boolean {
     if (!this.isConnected || !this.ws) {
       console.error("[IMG-WS] 图像上传 WebSocket 未连接，无法发送");
       return false;
     }
-    this.ws.send(uint8Array.buffer);
+    this.ws.send(uint8Array.buffer as BufferSource);
     return true;
   }
 
-  on(event, callback) {
+  on<T = unknown>(event: string, callback: (data: T) => void): void {
     if (!this._subscribers[event]) this._subscribers[event] = [];
-    this._subscribers[event].push(callback);
+    this._subscribers[event].push(callback as EventCallback);
   }
 
-  off(event, callback) {
+  off<T = unknown>(event: string, callback: (data: T) => void): void {
     if (!this._subscribers[event]) return;
-    this._subscribers[event] = this._subscribers[event].filter((cb) => cb !== callback);
+    this._subscribers[event] = this._subscribers[event].filter((cb) => cb !== callback as EventCallback);
   }
 
-  _emit(event, data) {
+  _emit(event: string, data?: unknown): void {
     if (this._subscribers[event]) {
       this._subscribers[event].forEach((cb) => cb(data));
     }
   }
 
-  _hexToBytes(hex) {
+  _hexToBytes(hex: string): Uint8Array {
     const bytes = new Uint8Array(hex.length / 2);
     for (let i = 0; i < hex.length; i += 2) {
       bytes[i / 2] = parseInt(hex.substr(i, 2), 16);

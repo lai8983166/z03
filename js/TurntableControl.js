@@ -155,13 +155,13 @@ export async function saveLinesToTxtFile(lines, filename = "output.txt", lineEnd
 
 // ==================== 转台报文构造与发送 ====================
 
-import wsClient from "./Client.js";
+import wsClient from "./Client";
 import {
   setBFrameRawCallback,
   getSJCJF000HRunning,
   startSJCJF000H,
   stopSJCJF000H,
-} from "./Command.js";
+} from "./Command";
 
 /**
  * 计算协议校验和。

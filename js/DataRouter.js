@@ -1,5 +1,5 @@
-import { Utils, setLEDStatus } from "../main.js";
-import statusBar from "./StatusBar.js";
+import { Utils, setLEDStatus } from "../main";
+import statusBar from "./StatusBar";
 
 let sendBuffer = new Uint8Array(1040);
 let resolveAck = null;

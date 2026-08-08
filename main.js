@@ -9,20 +9,20 @@
  *  提供公共工具函数 Utils（CSV 加载、表格操作等）
  */
 
-import { initializeInfraredTables } from "./js/Infrared.js";
-import { initializeLaserTables } from "./js/Laser.js";
-import { initializeCommandTables } from "./js/Command.js";
-import { initializeChart } from "./js/Chart.js";
-import wsClient from "./js/Client.js";
+import { initializeInfraredTables } from "./js/Infrared";
+import { initializeLaserTables } from "./js/Laser";
+import { initializeCommandTables } from "./js/Command";
+import { initializeChart } from "./js/Chart";
+import wsClient from "./js/Client";
 import PacketManager from "./js/BinaryTableHelper";
-import statusBar from "./js/StatusBar.js";
-import { initializeUploadImage } from "./js/ImageUpload.js";
-import { initializeVideoStream, initializeBinarizedStream } from "./js/Video.js";
-import { initializeCodeUpload } from "./js/CodeUpload.js";
-import { initializeTelemeter } from "./js/Telemeter.js";
-import { initializeDataRouter } from "./js/DataRouter.js";
-import { initializeYC } from "./js/YC.js";
-import { initTurntableUI } from "./js/TurntableControl.js";
+import statusBar from "./js/StatusBar";
+import { initializeUploadImage } from "./js/ImageUpload";
+import { initializeVideoStream, initializeBinarizedStream } from "./js/Video";
+import { initializeCodeUpload } from "./js/CodeUpload";
+import { initializeTelemeter } from "./js/Telemeter";
+import { initializeDataRouter } from "./js/DataRouter";
+import { initializeYC } from "./js/YC";
+import { initTurntableUI } from "./js/TurntableControl";
 
 const AppState = {
   currentTab: 2,

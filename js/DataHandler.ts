@@ -3,7 +3,7 @@
  * 根据 flag 分发到具体的业务处理函数
  */
 
-//import { Utils, setLEDStatus } from "../main.js";
+//import { Utils, setLEDStatus } from "../main";
 import {
   handle_CSZD_Recv_0100H,
   handle_CSZD_Recv_0200H,
@@ -21,16 +21,16 @@ import {
   handle_IRDetectParamRequest_Recv_0800H,
   handle_SJCJ_Recv_010203H,
   handle_SJCJ_Recv_1000H,
-    
+
     handle_SJCJ_Recv_F000H,
     handle_CSZD_Recv_4000H,
     handle_CSZD_Recv_3000H,
     handle_FJYJZ_2000H,
     handle_FJYJZJG_0020H,
-    
-} from "./Command.js";
+
+} from "./Command";
 // handle_ImageUpload_0B00H / handle_ImageUpload_Per_Frame_0B00H 已移至 ImageUploadClient.js 直接分发
-import { handle_ImageUpload_0B00H, handle_ImageUpload_Per_Frame_0B00H, } from "./ImageUpload.js";
+import { handle_ImageUpload_0B00H, handle_ImageUpload_Per_Frame_0B00H, } from "./ImageUpload";
 import {
     handle_CXSC_CodeUpload_HandShake_0615H_9000H,
     handle_CXSC_CodeUpload_HandShake_0616H_9000H,
@@ -42,22 +42,19 @@ import {
     handle_codeDownload_a000H,
     handle_codedownload_crc,
     handle_6000H_response,
-} from "./CodeUpload.js";
+} from "./CodeUpload";
 import {
     handle_SJL_SJCJ_Recv_0xFF,
     handle_SJL_SJCJ_Recv_0x00,
     handle_SJLTB_B,
 
-} from "./DataRouter.js"
-import { handle_YC_DATA_Per } from "./Telemeter.js";
+} from "./DataRouter"
+import { handle_YC_DATA_Per } from "./Telemeter";
 
 /**
  * 主处理入口
- * @param {number} flag - RS485_Recv_Flag
- * @param {string} name - 命令名称
- * @param {Uint8Array} data - 原始数据 (十六进制字符串需先转换)
  */
-export function handleRS485(flag, name, data, meta = null) {
+export function handleRS485(flag: number, name: string, data: Uint8Array, meta: unknown = null): void {
   //console.log(`[DataHandler] Processing flag=${flag}, name=${name}`);
 
   switch (flag) {
@@ -78,7 +75,7 @@ export function handleRS485(flag, name, data, meta = null) {
     case 5:
       handle_BBH_0030H(data);
       break;
-    case 6: 
+    case 6:
           handle_CSZD_Recv_3000H(data);
       break;
     case 7: //非均匀校正应答0020H
@@ -154,7 +151,7 @@ export function handleRS485(flag, name, data, meta = null) {
       case 25:
           if (data[0] == 0x15) { handle_codeDownload_handshake_9000H(data); }
           else if (data[0] == 0x40) { handle_codeDownload_a000H(data); }
-          
+
           else if (data[0] == 0x55) { handle_codedownload_crc(data);}
           break;
       case 26:
@@ -165,10 +162,12 @@ export function handleRS485(flag, name, data, meta = null) {
         break;
 
       case 44:
+          // @ts-expect-error handle_6000H_response 来自 CodeUpload.js，未 TS 化（change C 处理），实际接受 2 参数
           handle_6000H_response(data, meta);
           break;
-          
-      case 30: 
+
+      case 30:
+          // @ts-expect-error handle_SelfTest_0002H 来自 Command.js，未 TS 化（change C 处理），实际接受 1 参数
           handle_SelfTest_0002H(data);
           break;
       case 31:
@@ -187,7 +186,7 @@ export function handleRS485(flag, name, data, meta = null) {
           //handle_CSZD_Recv_4000H(data);
           break;
       case 40:
-          
+
           if (data[0] == 0xFF) {
               handle_SJL_SJCJ_Recv_0xFF(data);
           } else if (data[0] == 0x00) {
@@ -197,13 +196,14 @@ export function handleRS485(flag, name, data, meta = null) {
       case 41:
           handle_SJLTB_B(data);
           break;
-      case 42:
+      case 42: {
           const hexString = Array.from(data)
               .map((byte) => byte.toString(16).padStart(2, "0").toUpperCase())
               .join(" ");
-          
+
           console.log(hexString);
           break;
+      }
     default:
       console.warn(`[DataHandler] Unknown flag: ${flag}`);
   }
@@ -213,24 +213,24 @@ export function handleRS485(flag, name, data, meta = null) {
  * 数据采集 - 心跳
  *
  */
-export function handle_SJCJ_010203H() {
+export function handle_SJCJ_010203H(): void {
   handle_SJCJ_Recv_010203H();
 }
 
-function handleSelfCheckResult(data) {
+function handleSelfCheckResult(data: Uint8Array): void {
   console.log("[DataHandler] 自检结果 (5 bytes)");
   // 解析 5 字节自检结果
 }
 
-function handleParamRecv(data) {
+function handleParamRecv(data: Uint8Array): void {
   console.log("[DataHandler] 参数装订接收 (1040 bytes)");
 }
 
-function handleOneCmd(data) {
+function handleOneCmd(data: Uint8Array): void {
   console.log("[DataHandler] 一次指令");
 }
 
-function handleParamAck(data) {
+function handleParamAck(data: Uint8Array): void {
   console.log("[DataHandler] 参数装订应答");
   // 通常 1 字节，表示成功/失败
   const result = data[0];
@@ -241,29 +241,29 @@ function handleParamAck(data) {
   }
 }
 
-function handleParamDownAck(data) {
+function handleParamDownAck(data: Uint8Array): void {
   console.log("[DataHandler] 参数下传应答 (50 bytes)");
 }
 
-function handle0500H(data) {
+function handle0500H(data: Uint8Array): void {
   console.log("[DataHandler] 0500H (100 bytes)");
 }
 
-function handle0600H(data) {
+function handle0600H(data: Uint8Array): void {
   console.log("[DataHandler] 0600H (200 bytes)");
 }
 
-function handle0700H(data) {
+function handle0700H(data: Uint8Array): void {
   console.log("[DataHandler] 0700H (1 byte)");
 }
 
-function handle0800H(data) {
+function handle0800H(data: Uint8Array): void {
   console.log("[DataHandler] 0800H (140 bytes)");
 }
 
 // ==================== 激光数据处理 ====================
 
-export function handleLaserData(data) {
+export function handleLaserData(data: Uint8Array): void {
   console.log("[DataHandler] 激光图像数据 (108 bytes)");
   // 更新激光图像显示
   // 可以调用 laser.js 中的函数
@@ -271,7 +271,7 @@ export function handleLaserData(data) {
 
 // ==================== 图表数据处理 ====================
 
-export function handleChartUpdate(data) {
+export function handleChartUpdate(data: Uint8Array): void {
   console.log("[DataHandler] 图表数据更新");
   // 调用 chart.js 更新曲线
 }

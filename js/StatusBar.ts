@@ -3,7 +3,11 @@
  */
 
 class StatusBar {
-  constructor(elementId = "textBrowser_3") {
+  element: HTMLElement | null;
+  elementId: string;
+  maxMessages: number;
+
+  constructor(elementId: string = "textBrowser_3") {
     this.element = null;
     this.elementId = elementId;
 
@@ -13,7 +17,7 @@ class StatusBar {
   /**
    * 初始化状态栏
    */
-  init() {
+  init(): void {
     this.element = document.getElementById(this.elementId);
     if (!this.element) {
       console.warn(` 状态栏元素未找到: ${this.elementId}`);
@@ -24,10 +28,8 @@ class StatusBar {
 
   /**
    * 添加消息
-   * @param {string} message - 消息内容
-   * @param {string} color - 颜色
    */
-  addMessage(message, color = "black") {
+  addMessage(message: string, color: string = "black"): void {
     if (!this.element) {
       console.warn("[WARN] 状态栏未初始化");
       return;
@@ -49,7 +51,7 @@ class StatusBar {
 
     // 超出上限时，从顶部移除最旧的消息
     while (this.element.children.length > this.maxMessages) {
-      this.element.removeChild(this.element.firstChild);
+      this.element.removeChild(this.element.firstChild as Node);
     }
 
     this.element.scrollTop = this.element.scrollHeight;
@@ -57,36 +59,37 @@ class StatusBar {
 
   /**
    * 发送消息（红色）
+   * code 可选：调用方未传时显示 "undefined"（保持运行时原行为）
    */
-  sendMessage(command, code) {
+  sendMessage(command: string, code?: string): void {
     this.addMessage(`发送 ${command} (${code})`, "red");
   }
 
   /**
    * 接收消息（蓝色）
    */
-  receiveMessage(command, code) {
+  receiveMessage(command: string, code?: string): void {
     this.addMessage(`接收 ${command} (${code})`, "blue");
   }
 
   /**
    * 成功消息（绿色）
    */
-  successMessage(message) {
+  successMessage(message: string): void {
     this.addMessage(`✓ ${message}`, "green");
   }
 
   /**
    * 错误消息（橙色）
    */
-  errorMessage(message) {
+  errorMessage(message: string): void {
     this.addMessage(`✗ ${message}`, "orange");
   }
 
   /**
    * 清空状态栏
    */
-  clear() {
+  clear(): void {
     if (this.element) {
       this.element.innerHTML = "";
     }

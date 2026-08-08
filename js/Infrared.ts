@@ -17,9 +17,9 @@
  *    - 回放图像控制（滑块、上一帧、下一帧）
  */
 
-import { Utils, setLEDStatus } from "../main.js";
-import wsClient from "./Client.js";
-import statusBar from "./StatusBar.js";
+import { Utils, setLEDStatus } from "../main";
+import wsClient from "./Client";
+import statusBar from "./StatusBar";
 import {
   loadReplayFile,
   startReplay,
@@ -32,8 +32,8 @@ import {
   getReplayState,
   startSavingVideo,
   stopSavingVideo,
-} from "./Video.js";
-import { startSavingBlackbox, stopSavingBlackbox } from "./Telemeter.js";
+} from "./Video";
+import { startSavingBlackbox, stopSavingBlackbox } from "./Telemeter";
 import {
   startSavingYC,
   stopSavingYC,
@@ -48,7 +48,7 @@ import {
   replayNextYCFrame,
   onYCReplayStateChange,
   getYCReplayState,
-} from "./YC.js";
+} from "./YC";
 
 // 红外图像状态
 const InfraredState = {
@@ -65,7 +65,7 @@ export function initializeInfraredTables() {
 
   // 设置中心点（5,5）颜色为橙色
   setTimeout(() => {
-    const table = document.getElementById("tableWidget_6");
+    const table = document.getElementById("tableWidget_6") as HTMLTableElement | null;
     if (table && table.rows[5] && table.rows[5].cells[5]) {
       table.rows[5].cells[5].style.backgroundColor = "orange";
       table.rows[5].cells[5].style.fontWeight = "bold";
@@ -75,7 +75,7 @@ export function initializeInfraredTables() {
   Utils.centerAlignTable("tableWidget_6");
 
   // 分析区域表格（设置只读）
-  const table7 = document.getElementById("tableWidget_7");
+  const table7 = document.getElementById("tableWidget_7") as HTMLTableElement | null;
   if (table7 && table7.rows.length >= 4) {
     for (let i = 0; i < 4; i++) {
       Utils.setTableCellReadonly("tableWidget_7", i, 0);
@@ -83,8 +83,8 @@ export function initializeInfraredTables() {
     }
   }
 
-  const textEdit1 = document.getElementById("textEdit");
-  const textEdit2 = document.getElementById("textEdit_2");
+  const textEdit1 = document.getElementById("textEdit") as HTMLInputElement | null;
+  const textEdit2 = document.getElementById("textEdit_2") as HTMLInputElement | null;
   if (textEdit1) textEdit1.value = "0";
   if (textEdit2) textEdit2.value = "0";
 
@@ -93,11 +93,12 @@ export function initializeInfraredTables() {
 
 function bindInfraredEvents() {
   // 图像显示模式切换
-  const comboBox = document.getElementById("comboBox_ImgShowMode");
+  const comboBox = document.getElementById("comboBox_ImgShowMode") as HTMLSelectElement | null;
   if (comboBox) {
     comboBox.addEventListener("change", function (e) {
-      InfraredState.currentMode = e.target.selectedIndex;
-      console.log("切换显示模式:", e.target.value);
+      const target = e.target as HTMLSelectElement;
+      InfraredState.currentMode = target.selectedIndex;
+      console.log("切换显示模式:", target.value);
     });
   }
 
@@ -161,7 +162,7 @@ function bindInfraredEvents() {
 // 回放事件
 function bindReplayEvents() {
   // [STAR] 用于存储加载的回放数据
-  let loadedFrames = null;
+  let loadedFrames: Uint8Array[] | null = null;
   let replayLoadSerial = 0;
 
   // 选择回风/红外回放文件
@@ -172,7 +173,8 @@ function bindReplayEvents() {
       input.type = "file";
       input.accept = ".dat,.bin";
       input.onchange = async (e) => {
-        const file = e.target.files[0];
+        const target = e.target as HTMLInputElement;
+        const file = target.files?.[0];
         if (file) {
           await loadAndSetReplayFile(file, "video");
         }
@@ -191,7 +193,8 @@ function bindReplayEvents() {
       input.type = "file";
       input.accept = ".dat";
       input.onchange = async (e) => {
-        const file = e.target.files[0];
+        const target = e.target as HTMLInputElement;
+        const file = target.files?.[0];
         if (file) {
           await loadAndSetReplayFile(file, "blackbox");
         }
@@ -201,7 +204,7 @@ function bindReplayEvents() {
     });
   }
 
-  async function loadAndSetReplayFile(file, type) {
+  async function loadAndSetReplayFile(file: File, type: string) {
     const loadSerial = ++replayLoadSerial;
     const browser = document.getElementById("textBrowser_4");
 
@@ -223,15 +226,16 @@ function bindReplayEvents() {
       // 若用户在读取大文件期间又选择了新文件，丢弃较早的读取结果。
       if (loadSerial !== replayLoadSerial) return;
       loadedFrames = frames;
-      console.log(`[OK] 文件加载成功，共 ${loadedFrames.length} 帧`);
+      console.log(`[OK] 文件加载成功，共 ${frames.length} 帧`);
       if (browser) {
-        browser.textContent = `已选择: ${file.name} (${loadedFrames.length} 帧, 模式: ${type})`;
+        browser.textContent = `已选择: ${file.name} (${frames.length} 帧, 模式: ${type})`;
       }
     } catch (err) {
       if (loadSerial !== replayLoadSerial) return;
+      const errMsg = err instanceof Error ? err.message : String(err);
       console.error("[ERROR] 文件加载失败:", err);
       if (browser) {
-        browser.textContent = `加载失败: ${err.message}`;
+        browser.textContent = `加载失败: ${errMsg}`;
       }
     }
   }
@@ -270,7 +274,7 @@ function bindReplayEvents() {
   }
   // Stop button removed - stop action handled via play/pause toggle
 
-  const btnPrev = document.getElementById("pushButton_Previous_Frame");
+  const btnPrev = document.getElementById("pushButton_Previous_Frame") as HTMLButtonElement | null;
   if (btnPrev) {
     btnPrev.disabled = true;
     btnPrev.addEventListener("click", function () {
@@ -278,7 +282,7 @@ function bindReplayEvents() {
     });
   }
 
-  const btnNext = document.getElementById("pushButton_Next_Frame");
+  const btnNext = document.getElementById("pushButton_Next_Frame") as HTMLButtonElement | null;
   if (btnNext) {
     btnNext.disabled = true;
     btnNext.addEventListener("click", function () {
@@ -286,18 +290,20 @@ function bindReplayEvents() {
     });
   }
 
-  const slider = document.getElementById("horizontalSlider");
+  const slider = document.getElementById("horizontalSlider") as HTMLInputElement | null;
   if (slider) {
     slider.addEventListener("input", function (e) {
+      const target = e.target as HTMLInputElement;
       const replayState = getReplayState();
       if (replayState.totalFrames > 0) {
-        const percentage = e.target.value / 100;
+        const percentage = Number(target.value) / 100;
         const frameIndex = Math.floor(percentage * replayState.totalFrames);
         seekReplayFrame(frameIndex);
       }
     });
   }
 
+  // 根据当前回放/暂停状态更新上一帧/下一帧按钮的可用性
   // 根据当前回放/暂停状态更新上一帧/下一帧按钮的可用性
   function updateFrameStepButtons() {
     const state = getReplayState();
@@ -307,14 +313,14 @@ function bindReplayEvents() {
   }
 
   // ---- YC replay ----
-  let loadedYCFrames = null;
-  const ycSlider = document.getElementById("ycReplaySlider");
-  const ycCurrentFrame = document.getElementById("textEdit_YC_CurrentFrame");
-  const ycTotalFrame = document.getElementById("textEdit_YC_TotalFrame");
+  let loadedYCFrames: Uint8Array[] | null = null;
+  const ycSlider = document.getElementById("ycReplaySlider") as HTMLInputElement | null;
+  const ycCurrentFrame = document.getElementById("textEdit_YC_CurrentFrame") as HTMLInputElement | null;
+  const ycTotalFrame = document.getElementById("textEdit_YC_TotalFrame") as HTMLInputElement | null;
   const ycBrowser = document.getElementById("textBrowser_YC_Replay");
-  const btnPrevYC = document.getElementById("pushButton_Previous_YC_Frame");
-  const btnNextYC = document.getElementById("pushButton_Next_YC_Frame");
-  const ycReplayFpsInput = document.getElementById("input_YC_Replay_Fps");
+  const btnPrevYC = document.getElementById("pushButton_Previous_YC_Frame") as HTMLButtonElement | null;
+  const btnNextYC = document.getElementById("pushButton_Next_YC_Frame") as HTMLButtonElement | null;
+  const ycReplayFpsInput = document.getElementById("input_YC_Replay_Fps") as HTMLInputElement | null;
 
   function getYCReplayFpsFromInput() {
     const value = Number(ycReplayFpsInput ? ycReplayFpsInput.value : 200);
@@ -322,7 +328,7 @@ function bindReplayEvents() {
     return Math.max(1, Math.min(value, 200));
   }
 
-  function updateYCReplayUI(state = getYCReplayState()) {
+  function updateYCReplayUI(state: any = getYCReplayState()) {
     const total = state.totalFrames || (loadedYCFrames ? loadedYCFrames.length : 0);
     const btnStartYCReplay = document.getElementById("pushButton_Start_YC_Replay");
     if (ycReplayFpsInput && document.activeElement !== ycReplayFpsInput) {
@@ -332,7 +338,7 @@ function bindReplayEvents() {
     if (ycTotalFrame) ycTotalFrame.value = total;
     if (ycSlider) {
       ycSlider.max = total > 0 ? total : 0;
-      ycSlider.value = state.isReplaying ? Math.min(state.currentFrame, total) : 0;
+      ycSlider.value = String(state.isReplaying ? Math.min(state.currentFrame, total) : 0);
       ycSlider.disabled = total === 0;
     }
     const canStep = state.isReplaying && state.isPaused;
@@ -358,19 +364,22 @@ function bindReplayEvents() {
       input.type = "file";
       input.accept = ".dat,.bin";
       input.onchange = async (e) => {
-        const file = e.target.files[0];
+        const target = e.target as HTMLInputElement;
+        const file = target.files?.[0];
         if (!file) return;
         stopYCReplay();
         if (ycBrowser) ycBrowser.textContent = `正在加载YC: ${file.name}`;
         try {
-          loadedYCFrames = await loadYCReplayFile(file);
-          console.log(`[OK] YC文件加载成功，共 ${loadedYCFrames.length} 帧`);
-          if (ycBrowser) ycBrowser.textContent = `已选择YC: ${file.name} (${loadedYCFrames.length} 帧)`;
+          const frames = await loadYCReplayFile(file);
+          loadedYCFrames = frames;
+          console.log(`[OK] YC文件加载成功，共 ${frames.length} 帧`);
+          if (ycBrowser) ycBrowser.textContent = `已选择YC: ${file.name} (${frames.length} 帧)`;
           updateYCReplayUI();
         } catch (err) {
           loadedYCFrames = null;
+          const errMsg = err instanceof Error ? err.message : String(err);
           console.error("[ERROR] YC文件加载失败:", err);
-          if (ycBrowser) ycBrowser.textContent = `YC加载失败: ${err.message}`;
+          if (ycBrowser) ycBrowser.textContent = `YC加载失败: ${errMsg}`;
           updateYCReplayUI();
         }
       };
@@ -406,7 +415,8 @@ function bindReplayEvents() {
 
   if (ycSlider) {
     ycSlider.addEventListener("input", function (e) {
-      const frameIndex = Number(e.target.value) || 0;
+      const target = e.target as HTMLInputElement;
+      const frameIndex = Number(target.value) || 0;
       const state = getYCReplayState();
       if (!state.isReplaying && loadedYCFrames && loadedYCFrames.length > 0) {
         startYCReplay(loadedYCFrames, getYCReplayFpsFromInput());
@@ -423,7 +433,7 @@ function bindReplayEvents() {
   if (ycReplayFpsInput) {
     ycReplayFpsInput.addEventListener("change", function () {
       const fps = setYCReplayFps(getYCReplayFpsFromInput());
-      ycReplayFpsInput.value = fps;
+      ycReplayFpsInput.value = String(fps);
     });
   }
 

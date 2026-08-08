@@ -6,10 +6,10 @@
  * - 计算分析区域统计信息
  */
 
-import { Utils } from "../main.js";
-import wsClient from "./Client.js";
-import statusBar from "./StatusBar.js";
-import { handle_YC_DATA } from "./Telemeter.js";
+import { Utils } from "../main";
+import wsClient from "./Client";
+import statusBar from "./StatusBar";
+import { handle_YC_DATA } from "./Telemeter";
 
 // ==================== 视频保存状态 ====================
 export let isSavingVideo = false;

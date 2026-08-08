@@ -15,21 +15,21 @@
  *    - 回放设置
  *    - 回放图像控制
  */
-import { Utils } from "../main.js";
-import wsClient from "./Client.js";
-import statusBar from "./StatusBar.js";
+import { Utils } from "../main";
+import wsClient from "./Client";
+import statusBar from "./StatusBar";
 
 // 激光图像状态
 const LaserState = {
-  isSaving: false,
-  isReplaying: false,
-  isReplayPaused: true,
-  currentFrame: 0,
-  totalFrames: 0,
-  strategy: 0,
-  replayFrames: null,
-  replayTimer: null,
-  replayFps: 10,
+  isSaving: false as boolean,
+  isReplaying: false as boolean,
+  isReplayPaused: true as boolean,
+  currentFrame: 0 as number,
+  totalFrames: 0 as number,
+  strategy: 0 as number,
+  replayFrames: null as Uint8Array[] | null,
+  replayTimer: null as ReturnType<typeof setInterval> | null,
+  replayFps: 10 as number,
 };
 
 // 导出激光数据保存状态，供 Telemeter.js 使用
@@ -44,7 +44,7 @@ export let lastLaserDisplayTime = 0;
  * 仅当开关开启且距上次刷新已超过 1000ms 时才调用 updateLaserImage。
  * @param {Uint8Array} laserData - 108 字节的激光帧数据
  */
-export function tryUpdateLaserImage1Hz(laserData) {
+export function tryUpdateLaserImage1Hz(laserData: Uint8Array) {
     const now = Date.now();
     if (!isLaserDisplayEnabled) {
         if (now - lastLaserDisplayTime >= 100) {
@@ -77,7 +77,7 @@ export function startSavingJG() {
   console.log("[Laser] 请求服务端弹出文件保存对话框");
 
   // 监听服务端回传的保存状态（一次性）
-  const onStatus = (msg) => {
+  const onStatus = (msg: { saveType?: string; status?: string; path?: string; msg?: string }) => {
     if (msg.saveType !== "jg") return;
     wsClient.off("SAVE_STATUS", onStatus);
     if (msg.status === "started") {
@@ -147,7 +147,8 @@ export function initializeLaserTables() {
     });
 
   document.getElementById("comboBox")?.addEventListener("change", function (e) {
-    LaserState.strategy = e.target.selectedIndex + 1;
+    const target = e.target as HTMLSelectElement;
+    LaserState.strategy = target.selectedIndex + 1;
     console.log("选择策略:", LaserState.strategy);
   });
 
@@ -158,7 +159,8 @@ export function initializeLaserTables() {
       input.type = "file";
       input.accept = ".dat,.bin";
       input.onchange = async (e) => {
-        const file = e.target.files?.[0];
+        const target = e.target as HTMLInputElement;
+        const file = target.files?.[0];
         if (!file) return;
 
         stopLaserReplay();
@@ -179,7 +181,8 @@ export function initializeLaserTables() {
           LaserState.totalFrames = 0;
           LaserState.currentFrame = 0;
           updateLaserFrameDisplay();
-          setLaserReplayMessage(`加载失败: ${err.message}`);
+          const errMsg = err instanceof Error ? err.message : String(err);
+          setLaserReplayMessage(`加载失败: ${errMsg}`);
           console.error("[Laser] 文件加载失败:", err);
         }
       };
@@ -228,7 +231,8 @@ export function initializeLaserTables() {
     ?.addEventListener("input", function (e) {
       if (LaserState.totalFrames <= 0) return;
 
-      const percentage = Number(e.target.value) / 100;
+      const target = e.target as HTMLInputElement;
+      const percentage = Number(target.value) / 100;
       const frameIndex = Math.round(percentage * (LaserState.totalFrames - 1));
       seekLaserReplayFrame(frameIndex);
     });
@@ -236,7 +240,8 @@ export function initializeLaserTables() {
     document
         .getElementById("pushButton_JGQL")
         ?.addEventListener("click", () => {
-            const table = document.getElementById("tableWidget_8");
+            const table = document.getElementById("tableWidget_8") as HTMLTableElement | null;
+            if (!table) return;
             for (let i = 0; i < 6; i++) {
                 for (let j = 0; j < 6; j++) {
                     
@@ -267,17 +272,18 @@ export function initializeLaserTables() {
 
 const LASER_REPLAY_FRAME_SIZE = 108;
 
-function setLaserReplayMessage(message) {
+function setLaserReplayMessage(message: string) {
   const browser = document.getElementById("textBrowser_5");
   if (browser) browser.textContent = message;
 }
 
-export async function loadLaserReplayFile(file) {
+export async function loadLaserReplayFile(file: File): Promise<Uint8Array[]> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const raw = new Uint8Array(e.target.result);
+        const target = e.target as FileReader;
+        const raw = new Uint8Array(target.result as ArrayBuffer);
         if (raw.length < LASER_REPLAY_FRAME_SIZE) {
           reject(new Error("文件长度不足 1 帧激光数据"));
           return;
@@ -310,7 +316,7 @@ export async function loadLaserReplayFile(file) {
   });
 }
 
-function startLaserReplay(frames) {
+function startLaserReplay(frames: Uint8Array[]) {
   if (!frames || frames.length === 0) return;
 
   clearLaserReplayTimer();
@@ -366,12 +372,12 @@ function clearLaserReplayTimer() {
   }
 }
 
-function clampLaserReplayIndex(index) {
+function clampLaserReplayIndex(index: number) {
   if (LaserState.totalFrames <= 0) return 0;
   return Math.max(0, Math.min(Number(index) || 0, LaserState.totalFrames - 1));
 }
 
-function renderLaserFrameAt(index) {
+function renderLaserFrameAt(index: number) {
   if (!LaserState.replayFrames || LaserState.replayFrames.length === 0) return;
   const frameIndex = clampLaserReplayIndex(index);
   updateLaserImage(LaserState.replayFrames[frameIndex], "tableWidget_JGReply");
@@ -389,7 +395,7 @@ function renderLaserReplayFrame() {
   updateLaserFrameDisplay();
 }
 
-function seekLaserReplayFrame(frameIndex) {
+function seekLaserReplayFrame(frameIndex: number) {
   if (!LaserState.replayFrames || LaserState.replayFrames.length === 0) return;
   LaserState.currentFrame = clampLaserReplayIndex(frameIndex);
   renderLaserFrameAt(LaserState.currentFrame);
@@ -411,23 +417,24 @@ function replayNextLaserFrame() {
 }
 
 function updateLaserFrameDisplay() {
-  const currentFrameInput = document.getElementById("textEdit_CurrentFrame_JG");
-  const totalFrameInput = document.getElementById("textEdit_TotalFrame_JG");
+  const currentFrameInput = document.getElementById("textEdit_CurrentFrame_JG") as HTMLInputElement | null;
+  const totalFrameInput = document.getElementById("textEdit_TotalFrame_JG") as HTMLInputElement | null;
   const startButton = document.getElementById("pushButton_StartReplay_JG");
-  const prevButton = document.getElementById("pushButton_Previous_Frame_JG");
-  const nextButton = document.getElementById("pushButton_Next_Frame_JG");
+  const prevButton = document.getElementById("pushButton_Previous_Frame_JG") as HTMLButtonElement | null;
+  const nextButton = document.getElementById("pushButton_Next_Frame_JG") as HTMLButtonElement | null;
 
-  if (currentFrameInput) currentFrameInput.value = LaserState.currentFrame;
-  if (totalFrameInput) totalFrameInput.value = LaserState.totalFrames;
+  if (currentFrameInput) currentFrameInput.value = String(LaserState.currentFrame);
+  if (totalFrameInput) totalFrameInput.value = String(LaserState.totalFrames);
 
-  const slider = document.getElementById("horizontalSlider_JG");
+  const slider = document.getElementById("horizontalSlider_JG") as HTMLInputElement | null;
   if (slider) {
     slider.disabled = LaserState.totalFrames <= 0;
-    slider.value =
+    slider.value = String(
       LaserState.totalFrames > 0
         ? (LaserState.currentFrame / Math.max(1, LaserState.totalFrames - 1)) *
           100
-        : 0;
+        : 0,
+    );
   }
 
   const canStep =
@@ -449,18 +456,18 @@ function updateLaserFrameDisplay() {
  * @param {Uint8Array} laserData - 108 字节激光数据 (6x6x3)
  * @param {string} tableId - 目标 6x6 表格 ID
  */
-export function updateLaserImage(laserData, tableId = "tableWidget_8") {
+export function updateLaserImage(laserData: Uint8Array, tableId = "tableWidget_8") {
     //console.log("JGGGGGGGGG");
-  const table = document.getElementById(tableId);
+  const table = document.getElementById(tableId) as HTMLTableElement | null;
   if (!table || !laserData || laserData.length < LASER_REPLAY_FRAME_SIZE) {
     console.error(`[Laser] 激光图像数据无效或表格不存在: ${tableId}`);
     return;
   }
-  
+
 
   for (let i = 0; i < 6; i++) {
     for (let j = 0; j < 6; j++) {
-      const offset =  3 * j + 18 * i; 
+      const offset =  3 * j + 18 * i;
 
       // 读取 3 字节数据
       const byte0 = laserData[offset];
@@ -472,10 +479,10 @@ export function updateLaserImage(laserData, tableId = "tableWidget_8") {
       const distance = (byte0 ) | (byte1<<8) // 前2个字节组合
 
       // 计算显示值
-        let distanceValue = (distance * 0.15).toFixed(2);
-        if (distanceValue > 1500) {
+        let distanceValue: string | number = (distance * 0.15).toFixed(2);
+        if (Number(distanceValue) > 1500) {
             distanceValue = 1500;
-        } else if (distanceValue < 0) {
+        } else if (Number(distanceValue) < 0) {
             distanceValue = 0;
         }
 

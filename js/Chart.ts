@@ -4,8 +4,8 @@
  */
 
 // ==================== 全局变量 ====================
-let canvas = null;
-let ctx = null;
+let canvas: HTMLCanvasElement | null = null;
+let ctx: CanvasRenderingContext2D | null = null;
 let chartFrameCounter = 0;
 let needsRedraw = true;
 
@@ -20,8 +20,34 @@ const ChartConfig = {
   font: '12px Microsoft YaHei'
 };
 
+// 曲线配置类型
+interface CurveConfigEntry {
+  name: string;
+  offset: number;
+  scale: number;
+  checkBox: string;
+  color: string;
+}
+
+// 曲线数据类型
+interface CurveData {
+  x: Float32Array;
+  y: Float32Array;
+  count: number;
+  visible: boolean;
+  color: string;
+}
+
+// 绘图区域类型
+interface PlotArea {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 // 18条曲线配置
-const CURVE_CONFIG = [
+const CURVE_CONFIG: CurveConfigEntry[] = [
   { name: 'D_FYJ', offset: 6, scale: 0.001, checkBox: 'checkBox_D_FYJ', color: '#FF0000' },
   { name: 'D_FWJ', offset: 8, scale: 0.001, checkBox: 'checkBox_D_FWJ', color: '#00FF00' },
   { name: 'GS_FWJ', offset: 10, scale: 0.001, checkBox: 'checkBox_GS_FWJ', color: '#0000FF' },
@@ -45,8 +71,8 @@ const CURVE_CONFIG = [
 
 // 图表状态
 const ChartState = {
-  selectedCurves: new Set(),
-  chartData: {},
+  selectedCurves: new Set<string>(),
+  chartData: {} as Record<string, CurveData>,
   axisY: { min: -1, max: 1 } // Y轴范围（自动调整）
 };
 
@@ -102,7 +128,8 @@ function bindCheckboxEvents() {
     const checkbox = document.getElementById(curve.checkBox);
     if (checkbox) {
       checkbox.addEventListener("change", function(e) {
-        const isVisible = e.target.checked;
+        const target = e.target as HTMLInputElement;
+        const isVisible = target.checked;
         ChartState.chartData[curve.name].visible = isVisible;
 
         if (isVisible) {
@@ -140,7 +167,7 @@ function onResize() {
  * @param {number} y - Y坐标（数据值）
  * @param {number} maxPoints - 最大点数（通常500）
  */
-export function addChartDataPoint(curveName, x, y, maxPoints) {
+export function addChartDataPoint(curveName: string, x: number, y: number, maxPoints: number) {
   const curve = ChartState.chartData[curveName];
   if (!curve) {
     console.warn(`[Chart] Unknown curve: ${curveName}`);
@@ -167,7 +194,7 @@ export function addChartDataPoint(curveName, x, y, maxPoints) {
  * @param {string} curveName - 曲线名称
  * @param {boolean} isVisible - 是否可见
  */
-export function setCurveVisible(curveName, isVisible) {
+export function setCurveVisible(curveName: string, isVisible: boolean) {
   const curve = ChartState.chartData[curveName];
   if (curve) {
     curve.visible = isVisible;
@@ -263,7 +290,8 @@ function renderLoop() {
 /**
  * 绘制网格
  */
-function drawGrid(plotArea) {
+function drawGrid(plotArea: PlotArea) {
+  if (!ctx) return;
   ctx.strokeStyle = ChartConfig.gridColor;
   ctx.lineWidth = 0.5;
 
@@ -289,7 +317,8 @@ function drawGrid(plotArea) {
 /**
  * 绘制坐标轴
  */
-function drawAxes(plotArea) {
+function drawAxes(plotArea: PlotArea) {
+  if (!ctx || !canvas) return;
   ctx.strokeStyle = ChartConfig.axisColor;
   ctx.lineWidth = 2;
   ctx.font = ChartConfig.font;
@@ -328,7 +357,8 @@ function drawAxes(plotArea) {
 /**
  * 绘制Y轴刻度值
  */
-function drawYAxisLabels(plotArea) {
+function drawYAxisLabels(plotArea: PlotArea) {
+  if (!ctx) return;
   const yMin = ChartState.axisY.min;
   const yMax = ChartState.axisY.max;
   const yRange = yMax - yMin;
@@ -346,7 +376,8 @@ function drawYAxisLabels(plotArea) {
 /**
  * 绘制X轴刻度值
  */
-function drawXAxisLabels(plotArea) {
+function drawXAxisLabels(plotArea: PlotArea) {
+  if (!ctx) return;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
 
@@ -360,7 +391,8 @@ function drawXAxisLabels(plotArea) {
 /**
  * 绘制曲线
  */
-function drawCurves(plotArea) {
+function drawCurves(plotArea: PlotArea) {
+  if (!ctx) return;
   for (const curve of Object.values(ChartState.chartData)) {
     if (!curve.visible || curve.count === 0) continue;
 
@@ -387,6 +419,7 @@ function drawCurves(plotArea) {
  * 绘制图例
  */
 function drawLegend() {
+  if (!ctx || !canvas) return;
   let y = ChartConfig.padding.top;
 
   ctx.font = ChartConfig.font;
@@ -416,7 +449,7 @@ function drawLegend() {
  * @param {object} plotArea - 绘图区域
  * @returns {object} - 像素坐标 {x, y}
  */
-function dataToPixel(x, y, plotArea) {
+function dataToPixel(x: number, y: number, plotArea: PlotArea) {
   // X轴：帧计数 -> 像素
   const px = plotArea.x + (x / ChartConfig.maxPoints) * plotArea.width;
 
@@ -443,7 +476,7 @@ function updateChart() {
 /**
  * 添加数据（兼容旧接口）
  */
-function addChartData(curveName, value) {
+function addChartData(curveName: string, value: number) {
   const frameCounter = getChartFrameCounter();
   addChartDataPoint(curveName, frameCounter, value, ChartConfig.maxPoints);
 }

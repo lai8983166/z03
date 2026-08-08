@@ -1,14 +1,22 @@
-import { Utils, setLEDStatus } from "../main.js";
+import { Utils, setLEDStatus } from "../main";
 import PacketManager from "./BinaryTableHelper";
 import {
   handleVideoFrame,
   convert16to8bit,
   set_CurrentFrame,
-} from "./Video.js";
-import { isSavingJG, tryUpdateLaserImage1Hz } from "./Laser.js";
-import wsClient from "./Client.js";
-import { isSavingVideo } from "./Video.js";
-import statusBar from "./StatusBar.js";
+} from "./Video";
+import { isSavingJG, tryUpdateLaserImage1Hz } from "./Laser";
+import wsClient from "./Client";
+import { isSavingVideo } from "./Video";
+import statusBar from "./StatusBar";
+
+// main.js 在运行时给 window 挂载 isBlackboxReplaying 标志（黑匣子回放），
+// TS 内置 Window 类型不含此字段，此处扩展声明。
+declare global {
+  interface Window {
+    isBlackboxReplaying?: boolean;
+  }
+}
 
 // 黑匣子保存状态
 export let isSavingBlackbox = false;
@@ -21,7 +29,7 @@ let cur_offset = 0;
 let buffer = new Uint8Array(50000);
 
 // 二值图 canvas 上下文
-let ctxBinary = null;
+let ctxBinary: CanvasRenderingContext2D | null = null;
 
 export function initializeTelemeter() {
   Utils.loadCSVToTable("./csv/YCTX_Recv.csv", "tableWidget_YCTX", 34, 8);
@@ -55,7 +63,7 @@ export function initializeTelemeter() {
 }
 
 //1280
-export const handle_YC_DATA_Per = async (msg) => {
+export const handle_YC_DATA_Per = async (msg: Uint8Array): Promise<void> => {
   if (window.isBlackboxReplaying) return; // 回放黑匣子时，屏蔽实时遥测数据
   
   //let msg_data=msg;
@@ -95,7 +103,7 @@ export const handle_YC_DATA_Per = async (msg) => {
   }
 };
 
-export const handle_YC_DATA = async (data) => {
+export const handle_YC_DATA = async (data: Uint8Array): Promise<void> => {
   //console.log("handle_YC_DATA", data.length);
   const image_data = data.subarray(0, 32768);
   //console.log(image_data);
@@ -143,6 +151,7 @@ export const handle_YC_DATA = async (data) => {
 
     console.log(HexString);*/
   const helper = PacketManager.get("YCTX_Recv");
+  if (!helper) return;
   helper.loadBufferFromNet(restData);
   helper.updateAllToTable("tableWidget_YCTX");
 
@@ -225,16 +234,17 @@ export function startSavingBlackbox() {
   console.log("[Telemeter] 请求服务端弹出黑匣子文件保存对话框");
 
   // 监听服务端回传的保存状态（一次性）
-  const onStatus = (msg) => {
-    if (msg.saveType !== "blackbox") return;
+  const onStatus = (msg: unknown): void => {
+    const m = msg as { saveType: string; status: string; path?: string; msg?: string };
+    if (m.saveType !== "blackbox") return;
     wsClient.off("SAVE_STATUS", onStatus);
-    if (msg.status === "started") {
+    if (m.status === "started") {
       isSavingBlackbox = true;
-      statusBar.sendMessage(`正在保存黑匣子 → ${msg.path}`, "none");
-    } else if (msg.status === "cancelled") {
+      statusBar.sendMessage(`正在保存黑匣子 → ${m.path}`, "none");
+    } else if (m.status === "cancelled") {
       statusBar.sendMessage("已取消保存黑匣子", "none");
-    } else if (msg.status === "error") {
-      statusBar.sendMessage(`黑匣子保存失败: ${msg.msg}`, "none");
+    } else if (m.status === "error") {
+      statusBar.sendMessage(`黑匣子保存失败: ${m.msg}`, "none");
     }
   };
   wsClient.on("SAVE_STATUS", onStatus);
@@ -272,23 +282,25 @@ export function startSavingHeixiaziExcel() {
   });
   wsClient.sendText(cmd);
 
-  const onStatus = (msg) => {
-    if (msg.saveType !== "heixiazi_excel") return;
+  const onStatus = (msg: unknown): void => {
+    const m = msg as { saveType: string; status: string; path?: string; msg?: string };
+    if (m.saveType !== "heixiazi_excel") return;
     wsClient.off("SAVE_STATUS", onStatus);
-    if (msg.status === "started") {
+    if (m.status === "started") {
       isSavingHeixiaziExcel = true;
       // 服务端已就绪，发送表头（从当前 DOM 表格读取字段名）
       const helper = PacketManager.get("YCTX_Recv");
+      if (!helper) return;
       const names = helper.getAllNames("tableWidget_YCTX");
       wsClient.sendText(JSON.stringify({
         type: "HEIXIAZI_EXCEL_HEADER",
         header: ["时间戳", ...names],
       }));
-      statusBar.sendMessage(`正在保存黑匣子到 Excel → ${msg.path}`, "none");
-    } else if (msg.status === "cancelled") {
+      statusBar.sendMessage(`正在保存黑匣子到 Excel → ${m.path}`, "none");
+    } else if (m.status === "cancelled") {
       statusBar.sendMessage("已取消保存黑匣子 Excel", "none");
-    } else if (msg.status === "error") {
-      statusBar.sendMessage(`黑匣子 Excel 保存失败: ${msg.msg}`, "none");
+    } else if (m.status === "error") {
+      statusBar.sendMessage(`黑匣子 Excel 保存失败: ${m.msg}`, "none");
     }
   };
   wsClient.on("SAVE_STATUS", onStatus);

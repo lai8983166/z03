@@ -35,20 +35,20 @@
  *
  *  Tab 8 "红外图像检测参数装订"
  */
-import { Utils, setLEDStatus } from "../main.js";
+import { Utils, setLEDStatus } from "../main";
 import PacketManager from "./BinaryTableHelper";
-import wsClient from "./Client.js";
-import statusBar from "./StatusBar.js";
-import { triggerSJCJResolve } from "./ImageUpload.js";
-import { setTargetBoxPosition as setVideoTargetBoxPosition } from "./Video.js";
+import wsClient from "./Client";
+import statusBar from "./StatusBar";
+import { triggerSJCJResolve } from "./ImageUpload";
+import { setTargetBoxPosition as setVideoTargetBoxPosition } from "./Video";
 import {
   addChartDataPoint,
   setCurveVisible,
   getChartFrameCounter,
   incrementChartFrameCounter,
   updateAxisYRange as updateChartYRange,
-} from "./Chart.js";
-import { updateLaserImage } from "./Laser.js";
+} from "./Chart";
+import { updateLaserImage } from "./Laser";
 
 const sendBuffer = new Uint8Array(1040);
 let isSJCJRunning = false;

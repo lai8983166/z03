@@ -1,5 +1,5 @@
-import statusBar from "./StatusBar.js";
-import wsClient from "./Client.js";
+import statusBar from "./StatusBar";
+import wsClient from "./Client";
 
 const codeFile = {
     fileName:"",

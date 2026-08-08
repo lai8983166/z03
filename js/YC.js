@@ -1,4 +1,4 @@
-import { Utils, setLEDStatus } from "../main.js";
+import { Utils, setLEDStatus } from "../main";
 import PacketManager from "./BinaryTableHelper";
 import {
   handleVideoFrame,
@@ -6,8 +6,8 @@ import {
   set_CurrentFrame,
   drawScaledImage,
   histogramEqualization,
-} from "./Video.js";
-import { updateLaserImage } from "./Laser.js";
+} from "./Video";
+import { updateLaserImage } from "./Laser";
 
 // wsClient 和 statusBar 通过延迟动态 import 获取，避免与 Client.js 的循环依赖
 let _wsClient = null;

@@ -1,11 +1,30 @@
 /* filepath: /home/lai/Public/project/25suo/2026-1-6/js/Client.js */
-//import { handle_SJCJ_Recv_1000H } from "./Command.js";
-import { handleRS485, handle_SJCJ_010203H } from "./DataHandler.js"; // 引入数据处理路由
-import { handleVideoFrame, handleBinarizedFrame } from "./Video.js";
-import { handle_YC_DATA_Per } from "./Telemeter.js";
-import { handle_YC } from "./YC.js";
+//import { handle_SJCJ_Recv_1000H } from "./Command";
+import { handleRS485, handle_SJCJ_010203H } from "./DataHandler"; // 引入数据处理路由
+import { handleVideoFrame, handleBinarizedFrame } from "./Video";
+import { handle_YC_DATA_Per } from "./Telemeter";
+import { handle_YC } from "./YC";
+
+/** ws-bus 文本消息的通用 payload 形状 */
+interface WsMessage {
+  type: string;
+  data?: string;
+  flag?: number;
+  name?: string;
+  meta?: unknown;
+  message?: string;
+  [key: string]: unknown;
+}
+
+/** 事件回调签名 */
+type EventCallback = (data: unknown) => void;
 
 class WebSocketClient {
+  url: string;
+  ws: WebSocket | null;
+  isConnected: boolean;
+  subscribers: Record<string, EventCallback[]>;
+
   constructor() {
     // 自动使用当前页面的主机名连接 WebSocket，兼容本地测试和设备部署
     const host = window.location.hostname || "192.168.10.2";
@@ -17,7 +36,7 @@ class WebSocketClient {
   }
 
   // 初始化并建立连接 (只会在启动时调用一次)
-  connect() {
+  connect(): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
 
     this.ws = new WebSocket(this.url);
@@ -29,14 +48,14 @@ class WebSocketClient {
       this.emit("connected", { message: "Connection established" });
     };
 
-    this.ws.onmessage = (event) => {
+    this.ws.onmessage = (event: MessageEvent) => {
       if (event.data instanceof ArrayBuffer) {
         this.handleBinaryMessage(new Uint8Array(event.data));
         return;
       }
       if (typeof event.data === "string") {
         try {
-          const msg = JSON.parse(event.data);
+          const msg = JSON.parse(event.data) as WsMessage;
           this.handleInternalMessage(msg);
         } catch (e) {
           console.error("[ERROR] 文本消息解析失败:", e);
@@ -45,7 +64,7 @@ class WebSocketClient {
       }
 
       if (event.data instanceof Blob) {
-        event.data.arrayBuffer().then((buffer) => {
+        event.data.arrayBuffer().then((buffer: ArrayBuffer) => {
           this.handleBinaryMessage(new Uint8Array(buffer));
         });
       }
@@ -59,17 +78,17 @@ class WebSocketClient {
     };
   }
 
-  handleInternalMessage(msg) {
+  handleInternalMessage(msg: WsMessage): void {
     console.debug("[RECV] Recv:", msg.type);
 
     // 直接调用 DataHandler 或分发事件
     if (msg.type === "rs485") {
       const dataBytes = msg.data ? this.hexToBytes(msg.data) : null;
-      handleRS485(msg.flag, msg.name, dataBytes, msg.meta || null);
+      handleRS485(msg.flag!, msg.name!, dataBytes!, msg.meta as null);
     } else if (msg.type === "SJCJ_trigger") {
       handle_SJCJ_010203H();
     } else if (msg.type === "SAVE_STATUS") {
-     
+
       this.emit(msg.type, msg);
     }
     else {
@@ -77,7 +96,7 @@ class WebSocketClient {
     }
   }
 
-  handleBinaryMessage(uint8Array) {
+  handleBinaryMessage(uint8Array: Uint8Array): void {
     // 检查视频帧标识: [0x01][W:2][H:2][Data...] 或 [0x02][W:2][H:2][Data...]
     if (uint8Array.length > 5) {
       const packetType = uint8Array[0];
@@ -117,7 +136,7 @@ class WebSocketClient {
   }
 
   // 发送 UDP 专用 (封装 hex)
-  sendUdp(uint8Array) {
+  sendUdp(uint8Array: Uint8Array): boolean {
     if (!this.isConnected || !this.ws) {
       console.error("[ERROR] WebSocket 未连接");
       return false;
@@ -133,12 +152,12 @@ class WebSocketClient {
       /*const mes_package = { type: "udp", data: uint8Array.buffer };
       console.log(mes_package);*/
 
-      this.ws.send(uint8Array);
+      this.ws.send(uint8Array as BufferSource);
     return true;
   }
 
   // 发送文本消息（JSON控制指令）
-  sendText(text) {
+  sendText(text: string): boolean {
     if (!this.isConnected || !this.ws) {
       console.error("[ERROR] WebSocket 未连接");
       return false;
@@ -150,23 +169,23 @@ class WebSocketClient {
   }
 
   // --- 简单的事件订阅/发布 ---
-  on(event, callback) {
+  on<T = unknown>(event: string, callback: (data: T) => void): void {
     if (!this.subscribers[event]) this.subscribers[event] = [];
-    this.subscribers[event].push(callback);
+    this.subscribers[event].push(callback as EventCallback);
   }
 
-  off(event, callback) {
+  off<T = unknown>(event: string, callback: (data: T) => void): void {
     if (!this.subscribers[event]) return;
-    this.subscribers[event] = this.subscribers[event].filter((cb) => cb !== callback);
+    this.subscribers[event] = this.subscribers[event].filter((cb) => cb !== callback as EventCallback);
   }
 
-  emit(event, data) {
+  emit(event: string, data?: unknown): void {
     if (this.subscribers[event]) {
       this.subscribers[event].forEach((cb) => cb(data));
     }
   }
 
-  hexToBytes(hex) {
+  hexToBytes(hex: string): Uint8Array {
     const bytes = new Uint8Array(hex.length / 2);
     for (let i = 0; i < hex.length; i += 2) {
       bytes[i / 2] = parseInt(hex.substr(i, 2), 16);

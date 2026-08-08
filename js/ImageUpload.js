@@ -1,10 +1,10 @@
-import imgUploadClient, { setOnHandshakeAck, setOnPerFrameAck } from "./ImageUploadClient.js";
-import wsClient from "./Client.js";
-import statusBar from "./StatusBar.js";
-//import {loadCommand_SJCJ} from "./Command.js";
+import imgUploadClient, { setOnHandshakeAck, setOnPerFrameAck } from "./ImageUploadClient";
+import wsClient from "./Client";
+import statusBar from "./StatusBar";
+//import {loadCommand_SJCJ} from "./Command";
 import PacketManager from "./BinaryTableHelper";
-import { frameStats } from "./Video.js";
-import { loadCommand_SJCJ_F000H, setResolveAck_F000H_SJCJ } from "./Command.js";
+import { frameStats } from "./Video";
+import { loadCommand_SJCJ_F000H, setResolveAck_F000H_SJCJ } from "./Command";
 
 let buffer = null;
 let sendBuffer = new Uint8Array(1040);
