@@ -14,6 +14,7 @@ import { loadConfig } from "./config";
 import { createWsBus } from "./ws-bus";
 import { createVideo } from "./video";
 import { createData } from "./data";
+import { createControl } from "./control";
 
 // ==================== 配置 ====================
 // 所有运行时参数集中在 config.json，由 config.js 的 loadConfig 读取并校验。
@@ -180,7 +181,7 @@ wss.on("connection", (ws) => {
         console.log("📨 [WebSocket] JSON 消息:", data.type);
 
         // 处理各类控制消息
-        handleJsonControlMessage(data, ws);
+        control.handleJsonControlMessage(data, ws);
 
       } catch (e) {
         // 真正的异常：格式错误的 JSON
@@ -227,7 +228,7 @@ wss.on("connection", (ws) => {
       console.log("[MSG] [WebSocket] 文本消息:", data.type);
 
       // 处理控制消息（如 ping/pong）
-      handleJsonControlMessage(data, ws);
+      control.handleJsonControlMessage(data, ws);
     } catch (e) {
       //console.log(`server 转发数据 (${message.length} 字节)`);
       /*console.log(
@@ -541,6 +542,33 @@ const video = createVideo({
   getIsStreamingBinarized: () => isStreamingBinarizedVideo,
 });
 
+const control = createControl({
+  wsBus,
+  data,
+  video,
+  turntable: {
+    send: (buf) => sendToTurntableSerial(buf),
+    setPort: (port) => {
+      if (turntableSerial && turntableSerial.isOpen) {
+        turntableSerial.close((err) => {
+          if (err) console.warn("关闭旧串口时出错:", err.message);
+        });
+        turntableSerial = null;
+      }
+      TURNTABLE_SERIAL_PORT = port;
+      initTurntableSerial();
+    },
+  },
+  binarized: {
+    getInvert: () => binarizedInvert,
+    setInvert: (v) => { binarizedInvert = v; },
+    getThreshold: () => binarizedThreshold,
+    setThreshold: (v) => { binarizedThreshold = v; },
+    getIsStreaming: () => isStreamingBinarizedVideo,
+    setIsStreaming: (v) => { isStreamingBinarizedVideo = v; },
+  },
+});
+
 // 服务器启动后自动启动视频流（当前注释，维持遗留"不接入"现状）
 console.log("\n🎥 准备启动 RTSP 视频流监听...");
 /*setTimeout(() => {
@@ -600,160 +628,13 @@ process.on("SIGINT", () => {
  * @param {Object} data - 解析后的 JSON 数据
  * @param {WebSocket} ws - WebSocket 连接对象
  */
-function handleJsonControlMessage(data, ws) {
-  switch (data.type) {
-    case "ping":
-      ws.send(JSON.stringify({ type: "pong" }));
-      break;
-
-    case "SET_TURNTABLE_PORT": {
-      // 前端发来 { type: "SET_TURNTABLE_PORT", port: "COMx" }
-      const newPort = (data.port || "").trim().toUpperCase();
-      if (!newPort) {
-        ws.send(JSON.stringify({ type: "turntable_serial_error", message: "串口号不能为空" }));
-        break;
-      }
-      console.log(`[Server] 收到 SET_TURNTABLE_PORT: ${newPort}`);
-      // 关闭旧串口
-      if (turntableSerial && turntableSerial.isOpen) {
-        turntableSerial.close((err) => {
-          if (err) console.warn("关闭旧串口时出错:", err.message);
-        });
-        turntableSerial = null;
-      }
-      TURNTABLE_SERIAL_PORT = newPort;
-      initTurntableSerial();
-      break;
-    }
-
-    case "REQUEST_SAVE_PATH":
-      // 弹出原生文件保存对话框，取得路径后直接开始保存
-      console.log("[Server] 收到 REQUEST_SAVE_PATH, saveType:", data.saveType, ", defaultName:", data.defaultName);
-      data.showSaveFileDialog(data.defaultName || "数据.dat", data.filter, data.saveType).then((filePath) => {
-        console.log("[Server] 对话框结果:", filePath);
-        if (!filePath) {
-          // 用户取消
-          wsBus.broadcast({ type: "SAVE_STATUS", saveType: data.saveType, status: "cancelled" });
-          return;
-        }
-        data.rememberSaveDialogDir(data.saveType, filePath);
-        if (data.saveType === "video") {
-          data.startSavingVideo(filePath);
-        } else if (data.saveType === "jg") {
-          data.startSavingJG(filePath);
-        } else if (data.saveType === "blackbox") {
-          data.startSavingBlackbox(filePath);
-        } else if (data.saveType === "yc") {
-          data.startSavingYC(filePath);
-        } else if (data.saveType === "heixiazi_excel") {
-          data.startSavingHeixiaziExcel(filePath);
-        }
-      });
-      break;
-
-    case "CONTROL_CMD":
-      console.log("   [控制命令] action:", data.action);
-      handleControlCommand(data);
-      break;
-
-    case "SAVE_B_FRAME_ROW":
-      data.appendSjcjBRow(data.row);
-      break;
-
-    case "SAVE_A_FRAME_ROW":
-      data.appendSjcjARow(data.row);
-      break;
-
-    case "HEIXIAZI_EXCEL_HEADER":
-      data.setHeixiaziHeader(data.header);
-      break;
-
-    case "SAVE_HEIXIAZI_EXCEL_ROW":
-      // 前端每帧发来一行遥测数据
-      data.appendHeixiaziRow(data.row);
-      break;
-
-    case "BINARIZED_PARAMS":
-      // 处理二值化参数设置
-      const needRestart =
-        data.threshold !== undefined && data.threshold !== binarizedThreshold;
-
-      if (data.threshold !== undefined) {
-        binarizedThreshold = data.threshold;
-      }
-      if (data.invert !== undefined) {
-        binarizedInvert = data.invert;
-      }
-
-      // 如果阈值改变了，需要重启 FFmpeg 进程
-      if (needRestart) {
-        video.restartBinarizedVideoStream();
-      }
-      break;
-
-    default:
-      console.warn("⚠️ 未知的 JSON 消息类型:", data.type);
-  }
-}
+// handleJsonControlMessage 已迁 control 模块
 
 /**
  * 处理具体的控制命令
  * @param {Object} data - 控制命令数据
  */
-function handleControlCommand(data) {
-  switch (data.action) {
-    case "START_SAVE_SJCJ":
-      data.startSavingSJCJ(data.header, data.headerA);
-      break;
-    case "STOP_SAVE_SJCJ":
-      data.stopSavingSJCJ();  // async，不阻塞主流程
-      break;
-    case "START_SAVE_VIDEO":
-      data.startSavingVideo(data.filePath);
-      break;
-    case "STOP_SAVE_VIDEO":
-      data.stopSavingVideo();
-      break;
-    case "START_SAVE_JG":
-      data.startSavingJG(data.filePath);
-      break;
-    case "STOP_SAVE_JG":
-      data.stopSavingJG();
-      break;
-    case "START_SAVE_BLACKBOX":
-      data.startSavingBlackbox(data.filePath);
-      break;
-    case "STOP_SAVE_BLACKBOX":
-      data.stopSavingBlackbox();
-      break;
-    case "START_SAVE_YC":
-      data.startSavingYC(data.filePath);
-      break;
-    case "STOP_SAVE_YC":
-      data.stopSavingYC();
-      break;
-    case "STOP_SAVE_HEIXIAZI_EXCEL":
-      data.stopSavingHeixiaziExcel();
-      break;
-    case "START_BINARIZED_STREAM":
-      video.startBinarizedVideoStream();
-      isStreamingBinarizedVideo = true;
-      break;
-    case "STOP_BINARIZED_STREAM":
-      video.stopBinarizedVideoStream();
-      isStreamingBinarizedVideo = false;
-      break;
-    // ---- 转台串口转发 ----
-    case "SEND_TO_BRIDGE2":
-      // 前端发来 { type:"CONTROL_CMD", action:"SEND_TO_BRIDGE2", data:[...字节数组] }
-      if (data.data) {
-        sendToTurntableSerial(Buffer.from(data.data));
-      }
-      break;
-    default:
-      console.warn("⚠️ 未知的控制命令:", data.action);
-  }
-}
+// handleControlCommand 已迁 control 模块
 
 /**
  * 将二进制 buffer 格式化为 CSV 行并写入

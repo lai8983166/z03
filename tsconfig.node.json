@@ -1,4 +1,4 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["server.ts", "TcpBridge.ts", "js/Udp.ts", "config.ts", "ws-bus.ts", "video.ts", "data.ts"]
+  "include": ["server.ts", "TcpBridge.ts", "js/Udp.ts", "config.ts", "ws-bus.ts", "video.ts", "data.ts", "control.ts"]
 }
