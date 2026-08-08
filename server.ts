@@ -559,116 +559,11 @@ process.on("SIGINT", () => {
   process.exit(0);
 });
 
-// ==================== [新增] 数据保存模块 ====================
-let isSavingSJCJ = false;
-let cmdSendStream = null; // 保留（兼容旧引用，实际不再使用）
-let cmdRecvStream = null; // 保留（兼容旧引用，实际不再使用）
-
-// exceljs 双Sheet缓存
-let _sjcjARows = [];   // A帧行缓存 [[val,val,...], ...]
-let _sjcjBRows = [];   // B帧行缓存
-let _sjcjHeaderA = []; // A帧表头
-let _sjcjHeaderB = []; // B帧表头
-let _sjcjFilename = ""; // 目标文件名
-
-// Video/JG/Blackbox/YC 保存状态已迁 data 模块（isSavingVideo/videoStream 等）
-
-// 新增：遥测 Excel 保存相关（黑匣子）
-let isSavingHeixiaziExcel = false;
-let _heixiaziExcelRows = [];    // 行缓存 [[时间戳, val, val, ...], ...]
-let _heixiaziExcelHeader = [];  // 表头
-let _heixiaziExcelFilename = "";
-
+// ==================== 数据保存（全部由 data 模块管理）====================
+// SJCJ / Heixiazi / Video / JG / Blackbox / YC 保存 + 基础设施已迁 data 模块。
 // DATA_DIR 与保存目录创建已提前到 data 模块创建处（见上方 video/data 创建块）
 
-function normalizeSJCJExcelRow(row) {
-  const values = Array.isArray(row) ? row : String(row ?? "").split(",");
-  return values.map((value, index) => {
-    if (index === 0) return value;
-    if (typeof value === "number") return value;
-    if (typeof value !== "string") return value;
-
-    const trimmed = value.trim();
-    if (trimmed === "") return value;
-
-    const num = Number(trimmed);
-    return Number.isFinite(num) ? num : value;
-  });
-}
-
-/**
- * 启动数据保存
- */
-function startSavingSJCJ(dynamicHeaderB, dynamicHeaderA) {
-  if (isSavingSJCJ) return;
-
-  const now = new Date();
-  const cleanTime = now
-    .toISOString()
-    .replace(/T/, "-")
-    .replace(/\..+/, "")
-    .replace(/:/g, "-");
-
-  _sjcjFilename = path.join(DATA_DIR, `数据采集AB帧_${cleanTime}.xlsx`);
-
-  // 解析表头（CSV行格式 "字段1,字段2,..." 转数组）
-  _sjcjHeaderA = dynamicHeaderA ? dynamicHeaderA.replace(/\n$/, "").split(",") : ["时间"];
-  _sjcjHeaderB = dynamicHeaderB ? dynamicHeaderB.replace(/\n$/, "").split(",") : ["时间"];
-  _sjcjARows = [];
-  _sjcjBRows = [];
-
-  isSavingSJCJ = true;
-  console.log(`💾 [Server] 开始录制A/B帧 → ${_sjcjFilename}`);
-
-  wsBus.broadcast({
-    type: "SAVE_STATUS",
-    status: "started",
-    path: _sjcjFilename,
-    pathA: _sjcjFilename,
-    pathB: _sjcjFilename,
-  });
-}
-
-/**
- * 停止保存，将缓存数据写入 xlsx（A帧/B帧各一个Sheet）
- */
-async function stopSavingSJCJ() {
-  if (!isSavingSJCJ) return;
-  isSavingSJCJ = false;
-
-  const aRows = _sjcjARows;
-  const bRows = _sjcjBRows;
-  const headerA = _sjcjHeaderA;
-  const headerB = _sjcjHeaderB;
-  const filename = _sjcjFilename;
-
-  // 清空缓存
-  _sjcjARows = [];
-  _sjcjBRows = [];
-
-  console.log(`💾 [Server] 停止录制，写入 xlsx: A帧${aRows.length}行 B帧${bRows.length}行`);
-
-  try {
-    const wb = new ExcelJS.Workbook();
-
-    // ---- A帧 Sheet ----
-    const wsA = wb.addWorksheet("A帧");
-    wsA.addRow(headerA);
-    for (const row of aRows) wsA.addRow(normalizeSJCJExcelRow(row));
-
-    // ---- B帧 Sheet ----
-    const wsB = wb.addWorksheet("B帧");
-    wsB.addRow(headerB);
-    for (const row of bRows) wsB.addRow(normalizeSJCJExcelRow(row));
-
-    await wb.xlsx.writeFile(filename);
-    console.log(`✅ [Server] 已保存: ${filename}`);
-    wsBus.broadcast({ type: "SAVE_STATUS", status: "stopped", path: filename });
-  } catch (err) {
-    console.error("❌ 写入 xlsx 失败:", err);
-    wsBus.broadcast({ type: "SAVE_STATUS", status: "error", msg: err.message });
-  }
-}
+// SJCJ 函数（normalizeSJCJExcelRow / startSavingSJCJ / stopSavingSJCJ）已迁 data 模块
 
 /**
  * 启动视频流保存
@@ -682,82 +577,7 @@ async function stopSavingSJCJ() {
 
 // startSavingYC / stopSavingYC 已迁 data 模块
 
-// ==================== 黑匣子遥测 Excel 保存 ====================
-
-/**
- * 启动黑匣子遥测 Excel 保存（仅记录状态，表头由前端随后发来）
- * @param {string} filePath - 用户选择的保存路径（.xlsx）
- */
-function startSavingHeixiaziExcel(filePath) {
-  if (isSavingHeixiaziExcel) return;
-  try {
-    let filename = filePath && filePath.trim() !== "" ? filePath.trim() : (() => {
-      const now = new Date();
-      const t = now.toISOString().replace(/T/, "-").replace(/\..+/, "").replace(/:/g, "-");
-      return path.join(DATA_DIR, `黑匣子遥测数据_${t}.xlsx`);
-    })();
-
-    const dir = path.dirname(filename);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-    _heixiaziExcelFilename = filename;
-    _heixiaziExcelRows = [];
-    _heixiaziExcelHeader = [];
-    isSavingHeixiaziExcel = true;
-
-    console.log(`[Server] 开始录制黑匣子遥测 Excel: ${filename}`);
-    wsBus.broadcast({ type: "SAVE_STATUS", saveType: "heixiazi_excel", status: "started", path: filename });
-  } catch (err) {
-    console.error("启动黑匣子遥测 Excel 录制失败:", err);
-    wsBus.broadcast({ type: "SAVE_STATUS", saveType: "heixiazi_excel", status: "error", msg: err.message });
-  }
-}
-
-/**
- * 停止黑匣子遥测 Excel 保存，将缓存行写入 xlsx
- */
-function normalizeHeixiaziExcelRow(row) {
-  if (!Array.isArray(row)) return row;
-  return row.map((value, index) => {
-    if (index === 0) return value; // 时间戳保留为文本
-    if (typeof value === "number") return value;
-    if (typeof value !== "string") return value;
-
-    const trimmed = value.trim();
-    if (trimmed === "") return value;
-
-    const num = Number(trimmed);
-    return Number.isFinite(num) ? num : value;
-  });
-}
-
-async function stopSavingHeixiaziExcel() {
-  if (!isSavingHeixiaziExcel) return;
-  isSavingHeixiaziExcel = false;
-
-  const rows = _heixiaziExcelRows;
-  const header = _heixiaziExcelHeader;
-  const filename = _heixiaziExcelFilename;
-  _heixiaziExcelRows = [];
-  _heixiaziExcelHeader = [];
-
-  console.log(`[Server] 停止录制黑匣子遥测 Excel，共 ${rows.length} 行，写入: ${filename}`);
-
-  try {
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet("黑匣子遥测数据");
-
-    if (header.length > 0) ws.addRow(header);
-    for (const row of rows) ws.addRow(normalizeHeixiaziExcelRow(row));
-
-    await wb.xlsx.writeFile(filename);
-    console.log(`✅ [Server] 黑匣子遥测 Excel 已保存: ${filename}`);
-    wsBus.broadcast({ type: "SAVE_STATUS", saveType: "heixiazi_excel", status: "stopped", path: filename });
-  } catch (err) {
-    console.error("❌ 写入黑匣子遥测 Excel 失败:", err);
-    wsBus.broadcast({ type: "SAVE_STATUS", saveType: "heixiazi_excel", status: "error", msg: err.message });
-  }
-}
+// Heixiazi 函数（startSavingHeixiaziExcel / normalizeHeixiaziExcelRow / stopSavingHeixiaziExcel）已迁 data 模块
 
 /**
  * 调用 PowerShell 弹出系统原生的文件保存对话框
@@ -826,7 +646,7 @@ function handleJsonControlMessage(data, ws) {
         } else if (data.saveType === "yc") {
           data.startSavingYC(filePath);
         } else if (data.saveType === "heixiazi_excel") {
-          startSavingHeixiaziExcel(filePath);
+          data.startSavingHeixiaziExcel(filePath);
         }
       });
       break;
@@ -837,31 +657,20 @@ function handleJsonControlMessage(data, ws) {
       break;
 
     case "SAVE_B_FRAME_ROW":
-      if (isSavingSJCJ) {
-        // 将 CSV 行字符串解析为数组，推入 B帧缓存
-        _sjcjBRows.push(normalizeSJCJExcelRow(data.row));
-      }
+      data.appendSjcjBRow(data.row);
       break;
 
     case "SAVE_A_FRAME_ROW":
-      if (isSavingSJCJ) {
-        // 将 CSV 行字符串解析为数组，推入 A帧缓存
-        _sjcjARows.push(normalizeSJCJExcelRow(data.row));
-      }
+      data.appendSjcjARow(data.row);
       break;
 
     case "HEIXIAZI_EXCEL_HEADER":
-      // 前端在开始保存后发来表头
-      if (isSavingHeixiaziExcel && data.header) {
-        _heixiaziExcelHeader = data.header;
-      }
+      data.setHeixiaziHeader(data.header);
       break;
 
     case "SAVE_HEIXIAZI_EXCEL_ROW":
       // 前端每帧发来一行遥测数据
-      if (isSavingHeixiaziExcel && data.row) {
-        _heixiaziExcelRows.push(data.row);
-      }
+      data.appendHeixiaziRow(data.row);
       break;
 
     case "BINARIZED_PARAMS":
@@ -894,10 +703,10 @@ function handleJsonControlMessage(data, ws) {
 function handleControlCommand(data) {
   switch (data.action) {
     case "START_SAVE_SJCJ":
-      startSavingSJCJ(data.header, data.headerA);
+      data.startSavingSJCJ(data.header, data.headerA);
       break;
     case "STOP_SAVE_SJCJ":
-      stopSavingSJCJ();  // async，不阻塞主流程
+      data.stopSavingSJCJ();  // async，不阻塞主流程
       break;
     case "START_SAVE_VIDEO":
       data.startSavingVideo(data.filePath);
@@ -924,7 +733,7 @@ function handleControlCommand(data) {
       data.stopSavingYC();
       break;
     case "STOP_SAVE_HEIXIAZI_EXCEL":
-      stopSavingHeixiaziExcel();
+      data.stopSavingHeixiaziExcel();
       break;
     case "START_BINARIZED_STREAM":
       video.startBinarizedVideoStream();

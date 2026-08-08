@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "child_process";
 import fs from "fs";
 import path from "path";
 import type { WsBus } from "./ws-bus";
+import ExcelJS from "exceljs";
 
 /**
  * data 模块：数据保存（4 类简单流式保存）+ 基础设施（PowerShell 文件对话框 + CSV 写）。
@@ -34,6 +35,17 @@ export interface DataController {
   showSaveFileDialog(defaultName: string, filter: string, saveType: string): Promise<string | null>;
   rememberSaveDialogDir(saveType: string, filePath: string): void;
   writeRecvDataToCsv(buffer: Buffer): void;
+  // SJCJ（数据采集 A/B 帧双 sheet Excel）
+  startSavingSJCJ(dynamicHeaderB: string, dynamicHeaderA: string): void;
+  stopSavingSJCJ(): Promise<void>;
+  // Heixiazi（黑匣子遥测 Excel）
+  startSavingHeixiaziExcel(filePath: string): void;
+  stopSavingHeixiaziExcel(): Promise<void>;
+  // 数据接收接口（供 handleJsonControlMessage 的数据接收分支调用）
+  appendSjcjBRow(row: unknown): void;
+  appendSjcjARow(row: unknown): void;
+  setHeixiaziHeader(header: unknown): void;
+  appendHeixiaziRow(row: unknown): void;
 }
 
 // 常驻 PowerShell 进程运行的循环脚本（逐字搬迁自 server.ts _psWorkerScript）：
@@ -417,6 +429,156 @@ export function createData(opts: DataOptions): DataController {
     if (isSavingYC && ycStream) { ycStream.write(frame); ycFrameCount++; }
   }
 
+  // ============ SJCJ + Heixiazi Excel 保存（3b-3b 扩展，逐字搬迁自 server.ts）============
+  let isSavingSJCJ = false;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let _sjcjARows: any[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let _sjcjBRows: any[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let _sjcjHeaderA: any[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let _sjcjHeaderB: any[] = [];
+  let _sjcjFilename = "";
+
+  let isSavingHeixiaziExcel = false;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let _heixiaziExcelRows: any[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let _heixiaziExcelHeader: any[] = [];
+  let _heixiaziExcelFilename = "";
+
+  function normalizeSJCJExcelRow(row: unknown): unknown[] {
+    const values = Array.isArray(row) ? row : String(row ?? "").split(",");
+    return values.map((value, index) => {
+      if (index === 0) return value;
+      if (typeof value === "number") return value;
+      if (typeof value !== "string") return value;
+      const trimmed = value.trim();
+      if (trimmed === "") return value;
+      const num = Number(trimmed);
+      return Number.isFinite(num) ? num : value;
+    });
+  }
+
+  function startSavingSJCJ(dynamicHeaderB: string, dynamicHeaderA: string): void {
+    if (isSavingSJCJ) return;
+    const cleanTime = new Date().toISOString().replace(/T/, "-").replace(/\..+/, "").replace(/:/g, "-");
+    _sjcjFilename = path.join(DATA_DIR, `数据采集AB帧_${cleanTime}.xlsx`);
+    _sjcjHeaderA = dynamicHeaderA ? dynamicHeaderA.replace(/\n$/, "").split(",") : ["时间"];
+    _sjcjHeaderB = dynamicHeaderB ? dynamicHeaderB.replace(/\n$/, "").split(",") : ["时间"];
+    _sjcjARows = [];
+    _sjcjBRows = [];
+    isSavingSJCJ = true;
+    console.log(`💾 [Server] 开始录制A/B帧 → ${_sjcjFilename}`);
+    wsBus.broadcast({ type: "SAVE_STATUS", status: "started", path: _sjcjFilename, pathA: _sjcjFilename, pathB: _sjcjFilename });
+  }
+
+  async function stopSavingSJCJ(): Promise<void> {
+    if (!isSavingSJCJ) return;
+    isSavingSJCJ = false;
+    const aRows = _sjcjARows;
+    const bRows = _sjcjBRows;
+    const headerA = _sjcjHeaderA;
+    const headerB = _sjcjHeaderB;
+    const filename = _sjcjFilename;
+    _sjcjARows = [];
+    _sjcjBRows = [];
+    console.log(`💾 [Server] 停止录制，写入 xlsx: A帧${aRows.length}行 B帧${bRows.length}行`);
+    try {
+      const wb = new ExcelJS.Workbook();
+      const wsA = wb.addWorksheet("A帧");
+      wsA.addRow(headerA);
+      for (const row of aRows) wsA.addRow(normalizeSJCJExcelRow(row));
+      const wsB = wb.addWorksheet("B帧");
+      wsB.addRow(headerB);
+      for (const row of bRows) wsB.addRow(normalizeSJCJExcelRow(row));
+      await wb.xlsx.writeFile(filename);
+      console.log(`✅ [Server] 已保存: ${filename}`);
+      wsBus.broadcast({ type: "SAVE_STATUS", status: "stopped", path: filename });
+    } catch (err) {
+      const e = err as Error;
+      console.error("❌ 写入 xlsx 失败:", e);
+      wsBus.broadcast({ type: "SAVE_STATUS", status: "error", msg: e.message });
+    }
+  }
+
+  function normalizeHeixiaziExcelRow(row: unknown): unknown {
+    if (!Array.isArray(row)) return row;
+    return row.map((value, index) => {
+      if (index === 0) return value;
+      if (typeof value === "number") return value;
+      if (typeof value !== "string") return value;
+      const trimmed = value.trim();
+      if (trimmed === "") return value;
+      const num = Number(trimmed);
+      return Number.isFinite(num) ? num : value;
+    });
+  }
+
+  function startSavingHeixiaziExcel(filePath: string): void {
+    if (isSavingHeixiaziExcel) return;
+    try {
+      let filename: string;
+      if (filePath && filePath.trim() !== "") {
+        filename = filePath.trim();
+      } else {
+        const t = new Date().toISOString().replace(/T/, "-").replace(/\..+/, "").replace(/:/g, "-");
+        filename = path.join(DATA_DIR, `黑匣子遥测数据_${t}.xlsx`);
+      }
+      const dir = path.dirname(filename);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      _heixiaziExcelFilename = filename;
+      _heixiaziExcelRows = [];
+      _heixiaziExcelHeader = [];
+      isSavingHeixiaziExcel = true;
+      console.log(`[Server] 开始录制黑匣子遥测 Excel: ${filename}`);
+      wsBus.broadcast({ type: "SAVE_STATUS", saveType: "heixiazi_excel", status: "started", path: filename });
+    } catch (err) {
+      const e = err as Error;
+      console.error("启动黑匣子遥测 Excel 录制失败:", e);
+      wsBus.broadcast({ type: "SAVE_STATUS", saveType: "heixiazi_excel", status: "error", msg: e.message });
+    }
+  }
+
+  async function stopSavingHeixiaziExcel(): Promise<void> {
+    if (!isSavingHeixiaziExcel) return;
+    isSavingHeixiaziExcel = false;
+    const rows = _heixiaziExcelRows;
+    const header = _heixiaziExcelHeader;
+    const filename = _heixiaziExcelFilename;
+    _heixiaziExcelRows = [];
+    _heixiaziExcelHeader = [];
+    console.log(`[Server] 停止录制黑匣子遥测 Excel，共 ${rows.length} 行，写入: ${filename}`);
+    try {
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet("黑匣子遥测数据");
+      if (header.length > 0) ws.addRow(header);
+      for (const row of rows) ws.addRow(normalizeHeixiaziExcelRow(row));
+      await wb.xlsx.writeFile(filename);
+      console.log(`✅ [Server] 黑匣子遥测 Excel 已保存: ${filename}`);
+      wsBus.broadcast({ type: "SAVE_STATUS", saveType: "heixiazi_excel", status: "stopped", path: filename });
+    } catch (err) {
+      const e = err as Error;
+      console.error("❌ 写入黑匣子遥测 Excel 失败:", e);
+      wsBus.broadcast({ type: "SAVE_STATUS", saveType: "heixiazi_excel", status: "error", msg: e.message });
+    }
+  }
+
+  // 数据接收接口（封装原 server.ts handleJsonControlMessage 的内联逻辑）
+  function appendSjcjBRow(row: unknown): void {
+    if (isSavingSJCJ) _sjcjBRows.push(normalizeSJCJExcelRow(row));
+  }
+  function appendSjcjARow(row: unknown): void {
+    if (isSavingSJCJ) _sjcjARows.push(normalizeSJCJExcelRow(row));
+  }
+  function setHeixiaziHeader(header: unknown): void {
+    if (isSavingHeixiaziExcel && header) _heixiaziExcelHeader = header as unknown[];
+  }
+  function appendHeixiaziRow(row: unknown): void {
+    if (isSavingHeixiaziExcel && row) _heixiaziExcelRows.push(row);
+  }
+
   return {
     startSavingVideo, stopSavingVideo,
     startSavingJG, stopSavingJG,
@@ -426,5 +588,13 @@ export function createData(opts: DataOptions): DataController {
     showSaveFileDialog,
     rememberSaveDialogDir,
     writeRecvDataToCsv,
+    startSavingSJCJ,
+    stopSavingSJCJ,
+    startSavingHeixiaziExcel,
+    stopSavingHeixiaziExcel,
+    appendSjcjBRow,
+    appendSjcjARow,
+    setHeixiaziHeader,
+    appendHeixiaziRow,
   };
 }
