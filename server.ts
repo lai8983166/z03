@@ -13,6 +13,7 @@ import { SerialPort } from "serialport";
 import { loadConfig } from "./config";
 import { createWsBus } from "./ws-bus";
 import { createVideo } from "./video";
+import { createData } from "./data";
 
 // ==================== 配置 ====================
 // 所有运行时参数集中在 config.json，由 config.js 的 loadConfig 读取并校验。
@@ -199,37 +200,25 @@ wss.on("connection", (ws) => {
     }*/
     // 优先检测视频帧保存魔术字节 (0xF0 前缀，非JSON)
     if (Buffer.isBuffer(message) && message.length > 1 && message[0] === 0xf0) {
-      if (isSavingVideo && videoStream) {
-        videoStream.write(message.slice(1));
-        videoFrameCount++;
-      }
+      data.writeVideoFrame(message.slice(1));
       return;
     }
 
     // 检测激光帧保存魔术字节 (0xF1 前缀)
     if (Buffer.isBuffer(message) && message.length > 1 && message[0] === 0xf1) {
-      if (isSavingJG && jgStream) {
-        jgStream.write(message.slice(1));
-        jgFrameCount++;
-      }
+      data.writeJgFrame(message.slice(1));
       return;
     }
 
     // 检测黑匣子帧保存魔术字节 (0xF2 前缀)
     if (Buffer.isBuffer(message) && message.length > 1 && message[0] === 0xf2) {
-      if (isSavingBlackbox && blackboxStream) {
-        blackboxStream.write(message.slice(1));
-        blackboxFrameCount++;
-      }
+      data.writeBlackboxFrame(message.slice(1));
       return;
     }
 
     // 检测YC数据保存魔术字节 (0xF3 前缀)
     if (Buffer.isBuffer(message) && message.length > 1 && message[0] === 0xf3) {
-      if (isSavingYC && ycStream) {
-        ycStream.write(message.slice(1));
-        ycFrameCount++;
-      }
+      data.writeYcFrame(message.slice(1));
       return;
     }
 
@@ -530,9 +519,15 @@ const SRC_HEIGHT = cfg.video.srcHeight;
 const BYTES_PER_PIXEL_16BIT = cfg.video.bytesPerPixel16bit;
 const FRAME_SIZE_16BIT = SRC_HEIGHT * SRC_WIDTH * BYTES_PER_PIXEL_16BIT;
 const FRAME_SIZE_8BIT = SRC_HEIGHT * SRC_WIDTH;
-// ==================== RTSP 视频流（由 video 模块管理）====================
-// video 模块封装红外 + 二值化两条 ffmpeg 流；onFrame16bit 回调解耦数据保存
-// （isSavingVideo/videoStream/videoFrameCount 仍由 server.ts 管理，3b-3 迁）。
+// ==================== 数据保存 + RTSP 视频流（由 data / video 模块管理）====================
+const DATA_DIR = path.join(__dirname, cfg.dataDir);
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+const data = createData({ wsBus, dataDir: DATA_DIR });
+
+// video 模块封装红外 + 二值化两条 ffmpeg 流；onFrame16bit 通过 data.writeVideoFrame
+// 写入视频帧（isSavingVideo/videoStream 已迁 data 模块）。
 const video = createVideo({
   rtspUrl: cfg.video.rtspUrl,
   binarizedRtspUrl: cfg.video.binarizedRtspUrl,
@@ -541,12 +536,7 @@ const video = createVideo({
   srcHeight: cfg.video.srcHeight,
   bytesPerPixel16bit: cfg.video.bytesPerPixel16bit,
   wsBus,
-  onFrame16bit: (frame) => {
-    if (isSavingVideo && videoStream) {
-      videoStream.write(frame);
-      videoFrameCount++;
-    }
-  },
+  onFrame16bit: (frame) => data.writeVideoFrame(frame),
   getBinarizedInvert: () => binarizedInvert,
   getIsStreamingBinarized: () => isStreamingBinarizedVideo,
 });
@@ -581,25 +571,7 @@ let _sjcjHeaderA = []; // A帧表头
 let _sjcjHeaderB = []; // B帧表头
 let _sjcjFilename = ""; // 目标文件名
 
-// 新增：视频流保存相关
-let isSavingVideo = false;
-let videoStream = null;
-let videoFrameCount = 0;
-
-// 新增：激光数据保存相关
-let isSavingJG = false;
-let jgStream = null;
-let jgFrameCount = 0;
-
-// 新增：黑匣子保存相关
-let isSavingBlackbox = false;
-let blackboxStream = null;
-let blackboxFrameCount = 0;
-
-// 新增：YC数据保存相关
-let isSavingYC = false;
-let ycStream = null;
-let ycFrameCount = 0;
+// Video/JG/Blackbox/YC 保存状态已迁 data 模块（isSavingVideo/videoStream 等）
 
 // 新增：遥测 Excel 保存相关（黑匣子）
 let isSavingHeixiaziExcel = false;
@@ -607,11 +579,7 @@ let _heixiaziExcelRows = [];    // 行缓存 [[时间戳, val, val, ...], ...]
 let _heixiaziExcelHeader = [];  // 表头
 let _heixiaziExcelFilename = "";
 
-// 准备保存目录
-const DATA_DIR = path.join(__dirname, cfg.dataDir);
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
+// DATA_DIR 与保存目录创建已提前到 data 模块创建处（见上方 video/data 创建块）
 
 function normalizeSJCJExcelRow(row) {
   const values = Array.isArray(row) ? row : String(row ?? "").split(",");
@@ -706,265 +674,13 @@ async function stopSavingSJCJ() {
  * 启动视频流保存
  * @param {string} [filePath] - 前端指定的保存路径（含文件名），不传则自动生成
  */
-function startSavingVideo(filePath) {
-  if (isSavingVideo) return; // 已经在保存
+// startSavingVideo / stopSavingVideo 已迁 data 模块
 
-  try {
-    let filename;
-    if (filePath && filePath.trim() !== "") {
-      filename = filePath.trim();
-      // 目录不存在时自动创建
-      const dir = path.dirname(filename);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-    } else {
-      const now = new Date();
-      const cleanTime = now
-        .toISOString()
-        .replace(/T/, "-")
-        .replace(/\..+/, "")
-        .replace(/:/g, "-");
-      filename = path.join(DATA_DIR, `红外视频流_${cleanTime}.dat`);
-    }
+// startSavingJG / stopSavingJG 已迁 data 模块
 
-    // 创建写入流
-    videoStream = fs.createWriteStream(filename, { flags: "w" });
-    videoFrameCount = 0;
+// startSavingBlackbox / stopSavingBlackbox 已迁 data 模块
 
-    isSavingVideo = true;
-    console.log(`[Server] 开始录制视频流: ${filename}`);
-
-    // 通知前端状态更新
-    wsBus.broadcast({
-      type: "SAVE_STATUS",
-      saveType: "video",
-      status: "started",
-      path: filename,
-    });
-  } catch (err) {
-    console.error("启动视频录制失败:", err);
-    wsBus.broadcast({
-      type: "SAVE_STATUS",
-      saveType: "video",
-      status: "error",
-      msg: err.message,
-    });
-  }
-}
-
-/**
- * 停止视频流保存
- */
-function stopSavingVideo() {
-  if (!isSavingVideo) return;
-
-  isSavingVideo = false;
-
-  if (videoStream) {
-    videoStream.end();
-    videoStream = null;
-  }
-
-  console.log(`[Server] 停止录制视频流 (共保存 ${videoFrameCount} 帧)`);
-  wsBus.broadcast({
-    type: "SAVE_STATUS",
-    saveType: "video",
-    status: "stopped",
-    frameCount: videoFrameCount,
-  });
-
-  videoFrameCount = 0;
-}
-
-/**
- * 启动激光数据保存
- * @param {string} [filePath] - 前端指定的保存路径（含文件名），不传则自动生成
- */
-function startSavingJG(filePath) {
-  if (isSavingJG) return; // 已经在保存
-
-  try {
-    let filename;
-    if (filePath && filePath.trim() !== "") {
-      filename = filePath.trim();
-      // 目录不存在时自动创建
-      const dir = path.dirname(filename);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-    } else {
-      const now = new Date();
-      const cleanTime = now
-        .toISOString()
-        .replace(/T/, "-")
-        .replace(/\..+/, "")
-        .replace(/:/g, "-");
-      filename = path.join(DATA_DIR, `激光数据_${cleanTime}.dat`);
-    }
-
-    jgStream = fs.createWriteStream(filename, { flags: "w" });
-    jgFrameCount = 0;
-
-    isSavingJG = true;
-    console.log(`[Server] 开始录制激光数据: ${filename}`);
-
-    wsBus.broadcast({
-      type: "SAVE_STATUS",
-      saveType: "jg",
-      status: "started",
-      path: filename,
-    });
-  } catch (err) {
-    console.error("启动激光数据录制失败:", err);
-    wsBus.broadcast({
-      type: "SAVE_STATUS",
-      saveType: "jg",
-      status: "error",
-      msg: err.message,
-    });
-  }
-}
-
-/**
- * 停止激光数据保存
- */
-function stopSavingJG() {
-  if (!isSavingJG) return;
-
-  isSavingJG = false;
-
-  if (jgStream) {
-    jgStream.end();
-    jgStream = null;
-  }
-
-  console.log(`[Server] 停止录制激光数据 (共保存 ${jgFrameCount} 帧)`);
-  wsBus.broadcast({
-    type: "SAVE_STATUS",
-    saveType: "jg",
-    status: "stopped",
-    frameCount: jgFrameCount,
-  });
-
-  jgFrameCount = 0;
-}
-
-/**
- * 启动黑匣子保存
- */
-function startSavingBlackbox(filePath) {
-  if (isSavingBlackbox) return;
-
-  try {
-    let filename;
-    if (filePath && filePath.trim() !== "") {
-      filename = filePath.trim();
-      const dir = path.dirname(filename);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    } else {
-      const now = new Date();
-      const cleanTime = now
-        .toISOString()
-        .replace(/T/, "-")
-        .replace(/\..+/, "")
-        .replace(/:/g, "-");
-      filename = path.join(DATA_DIR, `黑匣子流_${cleanTime}.dat`);
-    }
-
-    blackboxStream = fs.createWriteStream(filename, { flags: "w" });
-    blackboxFrameCount = 0;
-    isSavingBlackbox = true;
-    console.log(`[Server] 开始录制黑匣子流: ${filename}`);
-
-    wsBus.broadcast({ type: "SAVE_STATUS", saveType: "blackbox", status: "started", path: filename });
-  } catch (err) {
-    console.error("启动黑匣子保存失败:", err);
-    wsBus.broadcast({ type: "SAVE_STATUS", saveType: "blackbox", status: "error", msg: err.message });
-  }
-}
-
-/**
- * 停止黑匣子保存
- */
-function stopSavingBlackbox() {
-  if (!isSavingBlackbox) return;
-
-  isSavingBlackbox = false;
-
-  if (blackboxStream) {
-    blackboxStream.end();
-    blackboxStream = null;
-  }
-
-  console.log(`[Server] 停止录制黑匣子流 (共保存 ${blackboxFrameCount} 帧)`);
-  wsBus.broadcast({
-    type: "SAVE_STATUS",
-    saveType: "blackbox",
-    status: "stopped",
-    frameCount: blackboxFrameCount,
-  });
-
-  blackboxFrameCount = 0;
-}
-
-/**
- * 启动YC数据保存
- */
-function startSavingYC(filePath) {
-  if (isSavingYC) return;
-
-  try {
-    let filename;
-    if (filePath && filePath.trim() !== "") {
-      filename = filePath.trim();
-      const dir = path.dirname(filename);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    } else {
-      const now = new Date();
-      const cleanTime = now
-        .toISOString()
-        .replace(/T/, "-")
-        .replace(/\..+/, "")
-        .replace(/:/g, "-");
-      filename = path.join(DATA_DIR, `YC数据_${cleanTime}.dat`);
-    }
-
-    ycStream = fs.createWriteStream(filename, { flags: "w" });
-    ycFrameCount = 0;
-    isSavingYC = true;
-    console.log(`[Server] 开始录制YC数据: ${filename}`);
-
-    wsBus.broadcast({ type: "SAVE_STATUS", saveType: "yc", status: "started", path: filename });
-  } catch (err) {
-    console.error("启动YC数据录制失败:", err);
-    wsBus.broadcast({ type: "SAVE_STATUS", saveType: "yc", status: "error", msg: err.message });
-  }
-}
-
-/**
- * 停止YC数据保存
- */
-function stopSavingYC() {
-  if (!isSavingYC) return;
-
-  isSavingYC = false;
-
-  if (ycStream) {
-    ycStream.end();
-    ycStream = null;
-  }
-
-  console.log(`[Server] 停止录制YC数据 (共保存 ${ycFrameCount} 帧)`);
-  wsBus.broadcast({
-    type: "SAVE_STATUS",
-    saveType: "yc",
-    status: "stopped",
-    frameCount: ycFrameCount,
-  });
-
-  ycFrameCount = 0;
-}
+// startSavingYC / stopSavingYC 已迁 data 模块
 
 // ==================== 黑匣子遥测 Excel 保存 ====================
 
@@ -1051,202 +767,13 @@ async function stopSavingHeixiaziExcel() {
  * @returns {Promise<string|null>} 用户选择的路径，取消时返回 null
  */
 
-// ---- 常驻 PowerShell 进程（预热，消除冷启动延迟）----
-let _psWorker = null;          // 常驻进程实例
-let _psWorkerReady = false;    // 是否已完成预热
-let _psWorkerBuf = "";         // stdout 缓冲
-let _psWorkerErrBuf = "";      // stderr 缓冲
-let _psWorkerPending = null;   // 当前等待中的 resolve
-const _saveDialogLastDirs = new Map();
-let _saveDialogLastDir = null;
+// PowerShell worker + 文件对话框状态已迁 data 模块
 
-// 常驻进程运行的循环脚本：启动后预加载 WinForms，然后循环等待 stdin 发来的 JSON 请求
-const _psWorkerScript = `
-[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$OutputEncoding           = [System.Text.Encoding]::UTF8
-Add-Type -AssemblyName System.Windows.Forms
-# 导入 Win32 API，用于强制抢占前台焦点
-Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-public class Win32 {
-    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-    [DllImport("user32.dll")] public static extern bool AllowSetForegroundWindow(int dwProcessId);
-    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-}
-'@
-# 预热完成，通知 Node
-Write-Host "READY"
-[Console]::Out.Flush()
-# 循环处理请求
-while ($true) {
-  $line = [Console]::In.ReadLine()
-  if ($null -eq $line) { break }
-  $line = $line.Trim()
-  if ($line -eq '') { continue }
-  try {
-    $req = $line | ConvertFrom-Json
-  } catch { continue }
-  # 创建一个屏幕中央的临时置顶窗口作为 owner，保证对话框弹到最前
-  $owner = New-Object System.Windows.Forms.Form
-  $owner.TopMost = $true
-  $owner.FormBorderStyle = 'None'
-  $owner.ShowInTaskbar = $false
-  $owner.StartPosition = 'CenterScreen'
-  $owner.Size = New-Object System.Drawing.Size(1, 1)
-  $owner.Opacity = 0
-  $owner.Show()
-  # 用 Win32 API 强制将 owner 窗口抢占到前台
-  $hwnd = $owner.Handle
-  [Win32]::AllowSetForegroundWindow(-1) | Out-Null
-  [Win32]::SetForegroundWindow($hwnd) | Out-Null
-  $owner.Activate()
-  $d = New-Object System.Windows.Forms.SaveFileDialog
-  $d.Title = $req.title
-  $d.FileName = $req.fileName
-  $d.Filter = $req.filter
-  if ($req.initialDirectory -and [System.IO.Directory]::Exists([string]$req.initialDirectory)) {
-    $d.InitialDirectory = [string]$req.initialDirectory
-  } else {
-    $d.InitialDirectory = [Environment]::GetFolderPath('Desktop')
-  }
-  $d.OverwritePrompt = $true
-  $result = $d.ShowDialog($owner)
-  $owner.Dispose()
-  if ($result -eq 'OK') { Write-Host $d.FileName } else { Write-Host 'CANCELLED' }
-  [Console]::Out.Flush()
-}
-`.trim();
+// _psWorkerScript（PowerShell 对话框脚本）已迁 data 模块
 
-function _ensurePsWorker() {
-  if (_psWorker && !_psWorker.killed) return;
+// _ensurePsWorker + 启动预热已迁 data 模块（createData 构造时预热）
 
-  const encoded = Buffer.from(_psWorkerScript, "utf16le").toString("base64");
-  _psWorkerReady = false;
-  _psWorkerBuf = "";
-  _psWorkerErrBuf = "";
-
-  _psWorker = spawn("powershell.exe", [
-    "-NoProfile",
-    "-STA",
-    "-ExecutionPolicy", "Bypass",
-    "-EncodedCommand", encoded,
-  ]);
-
-  _psWorker.stdout.on("data", (chunk) => {
-    _psWorkerBuf += chunk.toString("utf8");
-    // 按行处理
-    const lines = _psWorkerBuf.split(/\r?\n/);
-    _psWorkerBuf = lines.pop(); // 最后一段可能不完整，留到下次
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      if (!_psWorkerReady) {
-        if (trimmed === "READY") {
-          _psWorkerReady = true;
-          console.log("[Server] PowerShell 对话框工作进程已预热完毕");
-        }
-        continue;
-      }
-      // 这是对话框结果
-      if (_psWorkerPending) {
-        const resolve = _psWorkerPending;
-        _psWorkerPending = null;
-        resolve(trimmed === "CANCELLED" || trimmed.length === 0 ? null : trimmed);
-      }
-    }
-  });
-
-  _psWorker.stderr.on("data", (d) => {
-    _psWorkerErrBuf += d.toString("utf8");
-  });
-
-  _psWorker.on("close", (code) => {
-    if (_psWorkerErrBuf.trim()) console.error("[Server] PowerShell worker stderr:", _psWorkerErrBuf.trim());
-    console.warn(`[Server] PowerShell 对话框工作进程已退出 (code=${code})，下次调用将自动重启`);
-    _psWorker = null;
-    _psWorkerReady = false;
-    // 若有挂起请求，返回 null
-    if (_psWorkerPending) {
-      const resolve = _psWorkerPending;
-      _psWorkerPending = null;
-      resolve(null);
-    }
-  });
-
-  _psWorker.on("error", (err) => {
-    console.error("[Server] PowerShell worker 启动失败:", err);
-    _psWorker = null;
-    _psWorkerReady = false;
-    if (_psWorkerPending) {
-      const resolve = _psWorkerPending;
-      _psWorkerPending = null;
-      resolve(null);
-    }
-  });
-}
-
-// 服务启动时立即预热，消除第一次点击的延迟
-_ensurePsWorker();
-
-function getSaveDialogInitialDir(saveType) {
-  const rememberedDir = saveType ? _saveDialogLastDirs.get(saveType) : null;
-  const initialDir = rememberedDir || _saveDialogLastDir || DATA_DIR;
-  return initialDir && fs.existsSync(initialDir) ? initialDir : null;
-}
-
-function rememberSaveDialogDir(saveType, filePath) {
-  if (!filePath) return;
-  const dir = path.dirname(filePath);
-  if (!dir) return;
-  _saveDialogLastDir = dir;
-  if (saveType) _saveDialogLastDirs.set(saveType, dir);
-}
-
-function showSaveFileDialog(defaultName, filter, saveType) {
-  return new Promise((resolve) => {
-    // 若进程不存在（首次或崩溃重启），重新创建
-    _ensurePsWorker();
-
-    const initialDirectory = getSaveDialogInitialDir(saveType);
-    const req = JSON.stringify({
-      title:    "选择保存位置",
-      fileName: (defaultName || "数据.dat"),
-      filter:   (filter || "数据文件 (*.dat)|*.dat|所有文件 (*.*)|*.*"),
-      initialDirectory,
-    });
-
-    const doSend = () => {
-      _psWorkerPending = resolve;
-      try {
-        _psWorker.stdin.write(req + "\n", "utf8");
-      } catch (e) {
-        console.error("[Server] 写入 PowerShell worker 失败:", e);
-        _psWorkerPending = null;
-        resolve(null);
-      }
-    };
-
-    if (_psWorkerReady) {
-      doSend();
-    } else {
-      // 等待 READY 信号（最多 5 秒）
-      const startTime = Date.now();
-      const waitInterval = setInterval(() => {
-        if (_psWorkerReady) {
-          clearInterval(waitInterval);
-          doSend();
-        } else if (Date.now() - startTime > 5000) {
-          clearInterval(waitInterval);
-          console.error("[Server] PowerShell worker 预热超时");
-          resolve(null);
-        }
-      }, 50);
-    }
-  });
-}
+// getSaveDialogInitialDir / rememberSaveDialogDir / showSaveFileDialog 已迁 data 模块
 
 /**
  * 处理 JSON 控制消息
@@ -1282,22 +809,22 @@ function handleJsonControlMessage(data, ws) {
     case "REQUEST_SAVE_PATH":
       // 弹出原生文件保存对话框，取得路径后直接开始保存
       console.log("[Server] 收到 REQUEST_SAVE_PATH, saveType:", data.saveType, ", defaultName:", data.defaultName);
-      showSaveFileDialog(data.defaultName || "数据.dat", data.filter, data.saveType).then((filePath) => {
+      data.showSaveFileDialog(data.defaultName || "数据.dat", data.filter, data.saveType).then((filePath) => {
         console.log("[Server] 对话框结果:", filePath);
         if (!filePath) {
           // 用户取消
           wsBus.broadcast({ type: "SAVE_STATUS", saveType: data.saveType, status: "cancelled" });
           return;
         }
-        rememberSaveDialogDir(data.saveType, filePath);
+        data.rememberSaveDialogDir(data.saveType, filePath);
         if (data.saveType === "video") {
-          startSavingVideo(filePath);
+          data.startSavingVideo(filePath);
         } else if (data.saveType === "jg") {
-          startSavingJG(filePath);
+          data.startSavingJG(filePath);
         } else if (data.saveType === "blackbox") {
-          startSavingBlackbox(filePath);
+          data.startSavingBlackbox(filePath);
         } else if (data.saveType === "yc") {
-          startSavingYC(filePath);
+          data.startSavingYC(filePath);
         } else if (data.saveType === "heixiazi_excel") {
           startSavingHeixiaziExcel(filePath);
         }
@@ -1373,28 +900,28 @@ function handleControlCommand(data) {
       stopSavingSJCJ();  // async，不阻塞主流程
       break;
     case "START_SAVE_VIDEO":
-      startSavingVideo(data.filePath);
+      data.startSavingVideo(data.filePath);
       break;
     case "STOP_SAVE_VIDEO":
-      stopSavingVideo();
+      data.stopSavingVideo();
       break;
     case "START_SAVE_JG":
-      startSavingJG(data.filePath);
+      data.startSavingJG(data.filePath);
       break;
     case "STOP_SAVE_JG":
-      stopSavingJG();
+      data.stopSavingJG();
       break;
     case "START_SAVE_BLACKBOX":
-      startSavingBlackbox(data.filePath);
+      data.startSavingBlackbox(data.filePath);
       break;
     case "STOP_SAVE_BLACKBOX":
-      stopSavingBlackbox();
+      data.stopSavingBlackbox();
       break;
     case "START_SAVE_YC":
-      startSavingYC(data.filePath);
+      data.startSavingYC(data.filePath);
       break;
     case "STOP_SAVE_YC":
-      stopSavingYC();
+      data.stopSavingYC();
       break;
     case "STOP_SAVE_HEIXIAZI_EXCEL":
       stopSavingHeixiaziExcel();
@@ -1430,19 +957,7 @@ function handleControlCommand(data) {
  * 鉴于前端已有 helper.updateAllToTable 解析逻辑，
  * 我们可以仅在后端做原始数据转存：
  */
-function writeRecvDataToCsv(buffer) {
-  // ⚠️ 注意：要在后端完美复刻 BinaryTableHelper 解析逻辑比较复杂
-  // 这里暂时只写入 Hex 字符串或原始数据，或者根据项目需求
-  // 如果必须存解析后的值，建议：前端收到 1000H 并在 Helper 解析后，
-  // 把 CSV 行字符串通过 WebSocket 发回给 Server 保存。
-
-  // 简单实现：只写入时间戳和 Hex
-  if (cmdRecvStream) {
-    cmdRecvStream.write(
-      `${new Date().toISOString()},${buffer.toString("hex")}\n`,
-    );
-  }
-}
+// writeRecvDataToCsv 已迁 data 模块
 
 // ==================== 二值化流状态（进程由 video 模块管理）====================
 // isStreamingBinarizedVideo / binarizedThreshold / binarizedInvert 由 control 层
