@@ -304,7 +304,6 @@ function bindReplayEvents() {
   }
 
   // 根据当前回放/暂停状态更新上一帧/下一帧按钮的可用性
-  // 根据当前回放/暂停状态更新上一帧/下一帧按钮的可用性
   function updateFrameStepButtons() {
     const state = getReplayState();
     const canStep = state.isReplaying && state.isReplayPaused;
@@ -328,17 +327,26 @@ function bindReplayEvents() {
     return Math.max(1, Math.min(value, 200));
   }
 
-  function updateYCReplayUI(state: any = getYCReplayState()) {
+  /** YC 回放状态形状（来自 YC.js 的 getYCReplayState，跨 .js 边界，字段设可选匹配 `state.X || fallback` 模式） */
+  interface YCReplayState {
+    isReplaying?: boolean;
+    isPaused?: boolean;
+    currentFrame?: number;
+    totalFrames?: number;
+    fps?: number;
+  }
+
+  function updateYCReplayUI(state: YCReplayState = getYCReplayState() as YCReplayState) {
     const total = state.totalFrames || (loadedYCFrames ? loadedYCFrames.length : 0);
     const btnStartYCReplay = document.getElementById("pushButton_Start_YC_Replay");
     if (ycReplayFpsInput && document.activeElement !== ycReplayFpsInput) {
-      ycReplayFpsInput.value = state.fps || getYCReplayFpsFromInput();
+      ycReplayFpsInput.value = String(state.fps || getYCReplayFpsFromInput());
     }
-    if (ycCurrentFrame) ycCurrentFrame.value = state.isReplaying ? state.currentFrame : 0;
-    if (ycTotalFrame) ycTotalFrame.value = total;
+    if (ycCurrentFrame) ycCurrentFrame.value = String(state.isReplaying ? state.currentFrame ?? 0 : 0);
+    if (ycTotalFrame) ycTotalFrame.value = String(total);
     if (ycSlider) {
-      ycSlider.max = total > 0 ? total : 0;
-      ycSlider.value = String(state.isReplaying ? Math.min(state.currentFrame, total) : 0);
+      ycSlider.max = String(total > 0 ? total : 0);
+      ycSlider.value = String(state.isReplaying ? Math.min(state.currentFrame ?? 0, total) : 0);
       ycSlider.disabled = total === 0;
     }
     const canStep = state.isReplaying && state.isPaused;
