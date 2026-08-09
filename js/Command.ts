@@ -2338,7 +2338,7 @@ const loadCommand_SelfTest = () => {
 /**
  * 自检命令回复
  */
-export const handle_SelfTest_0002H = () => {
+export const handle_SelfTest_0002H = (): void => {
   console.log("[DataHandler] 收到自检命令回复");
   statusBar.receiveMessage("自检命令回复", "0001H");
 };
@@ -3076,7 +3076,7 @@ export const handle_IRDetectParamRequest_Recv_0800H = (data: Uint8Array): void =
   statusBar.sendMessage("红外参数下传解析完成", "0800H");
 };
 
-export const loadCommand_SJCJ = async () => {
+export const loadCommand_SJCJ = async (): Promise<void> => {
   sendBuffer[0] = 0x31;
   sendBuffer[1] = 0x02;
   sendBuffer[2] = 0x01;
@@ -3220,7 +3220,7 @@ export const loadCommand_SJCJ = async () => {
 /**
  * 数据采集应答010203H
  */
-export const handle_SJCJ_Recv_010203H = () => {
+export const handle_SJCJ_Recv_010203H = (): void => {
   //console.log("[DataHandler] 数据采集应答");
   statusBar.receiveMessage("数据采集应答", "010203H");
 
@@ -3459,7 +3459,9 @@ const updateChart_SJCJ = () => {
   for (const curve of curves) {
     let value: number = 0;
     if (curve.paramName) {
-      value = Number(helper.getValue(Number(curve.paramName))) || 0;
+      // 按字段名查值（修复原 bug：原代码误用 getValue(number) 传字符串，
+      // 运行时 metaData.has(string) 恒 false → 返回 "ERR"，图表曲线从未显示真实数据）
+      value = Number(helper.getValueByName(curve.paramName)) || 0;
     }
 
     // 添加数据点到图表
@@ -3689,7 +3691,7 @@ const parseBinaryOption = (str: string): number => {
   return 0;
 };
 
-export const loadCommand_SJCJ_F000H = async () => {
+export const loadCommand_SJCJ_F000H = async (): Promise<void> => {
   
     sendBuffer[0] = 0x31;
     sendBuffer[1] = 0x02;

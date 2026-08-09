@@ -1148,7 +1148,7 @@ function update11x11Region(SRC_SIZE = 128, processedFrame: Uint8Array | null = n
     }
   }
 
-  if (frameCount == 100) {
+  if (frameCount === 100) {
     let Y = 0;
     for (let i = 0; i < 6; ++i) {
       Y += pixelValues_5X5[i];
@@ -1353,7 +1353,7 @@ export function convert16to8bit(frame16: Uint8Array, src_size = 128): Uint8Array
   // DataView 会将 undefined 作为默认值（缓冲区全长），故功能未受影响。
   const dv = new DataView(
     frame16.buffer,
-    (frame16 as unknown as Record<string, number | undefined>)["byteoffset"],
+    frame16.byteOffset,
     frame16.byteLength,
   );
 
