@@ -40,3 +40,26 @@
 #### Scenario: 已迁移文件 git diff 去掉类型后逐字一致
 - **WHEN** 对已迁移的 .ts 文件运行 `git diff`，去掉所有类型标注（interface/type/字段声明/`: T`/`as T`/`// @ts-expect-error`/narrowing 守卫/import 路径后缀）后
 - **THEN** 可执行代码部分与重构前逐字一致（含样式代码完全不动）
+
+### Requirement: 业务模块纯函数测试覆盖
+项目 MUST 为前端业务模块的纯函数与协议构造函数提供单测覆盖，至少覆盖：
+- `Chart.getChartFrameCounter` / `incrementChartFrameCounter`（含达 maxPoints 重置边界）
+- `Chart.addChartDataPoint` / `setCurveVisible`（chartData 未初始化时不抛错）
+- `Command.loadCommand_SJCJ`（防御性检查：PacketManager.get 返回 null 时不抛错、不调 sendUdp）
+
+未覆盖（留作未来）：
+- `Command.loadCommand_SJCJ` 完整 packet 字节布局（受 module-level `isSJCJRunning` 限制，非 export）
+- `Command.loadCommand_SJCJ_F000H`（同上）
+- `data.ts` normalizeSJCJExcelRow/normalizeHeixiaziExcelRow（闭包内部，无法直接 import）
+
+#### Scenario: Chart counter 递增 + 重置
+- **WHEN** 调用 incrementChartFrameCounter 多次，最后一次达到 maxPoints
+- **THEN** counter 重置（达 maxPoints 触发）
+
+#### Scenario: Chart addChartDataPoint 未初始化时不抛错
+- **WHEN** 未调 initializeChart 时调 addChartDataPoint("foo", 0, 1, 100)
+- **THEN** 不抛错，console.warn 被调用
+
+#### Scenario: Command.loadCommand_SJCJ helper null 时不调 sendUdp
+- **WHEN** PacketManager.get 返回 null，调用 loadCommand_SJCJ()
+- **THEN** 不抛错，wsClient.sendUdp 不被调用
