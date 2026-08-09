@@ -1,6 +1,6 @@
 # Spec: frontend-modules
 
-> 前端业务模块（`js/` 下）的 TS 化与类型契约。本 capability 在 frontend-ts-batch-a change 中建立（批 A 8 小文件），frontend-ts-batch-b 完成批 B（5 中等文件），frontend-ts-batch-c 完成批 C（2 大文件 Video/Command）。仅剩 main.js + index.html 留批 D 单独决策。
+> 前端业务模块（`js/` 下 + 入口 `main.ts`）的 TS 化与类型契约。本 capability 在 frontend-ts-batch-a 建立批 A，frontend-ts-batch-b/c 完成 B/C，frontend-ts-batch-d 完成批 D（入口 + index.html）。全前端 .ts 化完成。
 
 ## Requirements
 
@@ -9,11 +9,11 @@
 - ✅ **批 A（frontend-ts-batch-a，已完成）**：8 个小文件——`Client.ts` / `ImageUploadClient.ts` / `StatusBar.ts` / `Chart.ts` / `Infrared.ts` / `Laser.ts` / `DataHandler.ts` / `Telemeter.ts`
 - ✅ **批 B（frontend-ts-batch-b，已完成）**：5 个中等文件——`YC.ts` / `ImageUpload.ts` / `DataRouter.ts` / `CodeUpload.ts` / `TurntableControl.ts`
 - ✅ **批 C（frontend-ts-batch-c，已完成）**：2 个大文件——`Video.ts` / `Command.ts`
-- ⏳ **批 D（独立决策）**：`main.js` + index.html（涉及 index.html 改动约束，单独评估）
+- ✅ **批 D（frontend-ts-batch-d，已完成）**：入口 `main.ts`（449 行）+ index.html src 更新（仅 1 行，非样式）
 
-#### Scenario: 批 A/B/C 15 个文件全部通过 typecheck
+#### Scenario: 批 A/B/C/D 16 个文件全部通过 typecheck
 - **WHEN** 运行 `npm run typecheck`
-- **THEN** tsconfig.json（前端）检查 15 个 .ts 文件并通过，0 错（允许极少数成本过高处用 `// @ts-expect-error` 注明原因）
+- **THEN** tsconfig.json（前端）检查 16 个 .ts 文件（含入口 main.ts）并通过，0 错（允许极少数成本过高处用 `// @ts-expect-error` 注明原因）
 
 #### Scenario: 批 A 8 个文件无 @ts-nocheck
 - **WHEN** grep 8 个文件的 `@ts-nocheck`
