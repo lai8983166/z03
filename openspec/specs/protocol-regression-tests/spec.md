@@ -5,7 +5,7 @@
 ## Requirements
 
 ### Requirement: 协议层纯逻辑测试覆盖
-项目 MUST 为协议层的纯逻辑提供回归测试，至少覆盖：`CommandBuilder.buildPacket`/`bufferToHex`；`BinaryTableHelper.parseLocData`/`setValue`/`getValue`/`getValueByName`/`setValueByName`/`getIndexByName`/`formatFloat`/`getAllValues`/`copyTo`/`loadBufferFromNet`；`TcpBridge.handleData` 的各 AR(0x54/0x32/0x4A) 与命令字路由、短包/非法头、`localPort==30042` 的 YC 分支、heixiazi 分支、6000H 代码上传分支；`UdpBridge._handleMessage` 的命令表路由。
+项目 MUST 为协议层的纯逻辑提供回归测试，至少覆盖：`CommandBuilder.buildPacket`/`bufferToHex`；`BinaryTableHelper.parseLocData`/`setValue`/`getValue`/`getValueByName`/`setValueByName`/`getIndexByName`/`formatFloat`/`getAllValues`/`copyTo`/`loadBufferFromNet`；`TcpBridge.handleData` 的各 AR(0x54/0x32/0x4A) 与命令字路由、短包/非法头、`localPort==30042` 的 YC 分支、heixiazi 分支、6000H 代码上传分支；`UdpBridge._handleMessage` 的命令表路由；`DataHandler.handleRS485` 的 flag 路由（含 data[0] 分支）；`control.handleControlCommand`/`handleJsonControlMessage` 的消息路由（含 saveType 分支、threshold 变化触发 restart、空 port 错误）。
 
 #### Scenario: TcpBridge.handleData 按 AR+cmd 路由 emit rs485
 - **WHEN** 构造 `new TcpBridge()` 实例，注册 `rs485` 监听，调用 `handleData(构造的 0x54 AR + 某 cmd 的 Buffer, port)`
