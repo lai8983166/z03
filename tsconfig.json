@@ -17,7 +17,8 @@
     "vite.config.ts",
     "vitest.config.ts",
     "tests/**/*.ts",
-    "js/*.ts"
+    "js/*.ts",
+    "main.ts"
   ],
   "exclude": ["node_modules"]
 }

@@ -24,26 +24,57 @@ import { initializeDataRouter } from "./js/DataRouter";
 import { initializeYC } from "./js/YC";
 import { initTurntableUI } from "./js/TurntableControl";
 
-const AppState = {
+// 运行时挂载到 window 的全局（由本模块或其他模块赋值）
+declare global {
+  interface Window {
+    showTab(index: number): void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    wsClient?: typeof wsClient;
+    isBlackboxReplaying?: boolean;
+    isBlackboxDrawing?: boolean;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    [key: string]: unknown;
+  }
+}
+
+interface AppState {
+  currentTab: number;
+}
+
+interface EditableCell {
+  row: number;
+  col: number;
+}
+
+interface UtilsType {
+  loadCSVToTable(csvPath: string, tableId: string, rows: number, cols: number, editableCells?: EditableCell[]): Promise<void>;
+  getEditableCellsAsPositionMap(tableId: string, editableCells: EditableCell[]): Map<string, string>;
+  setEditableCells(tableId: string, editableCells: EditableCell[]): void;
+  parseCSV(text: string): string[][];
+  saveTableToCSV(tableId: string, fileName: string, rows: number, cols: number): void;
+  setTableCellReadonly(tableId: string, row: number, col: number): void;
+  centerAlignTable(tableId: string): void;
+  stretchTableColumns(tableId: string): void;
+  setCellWidget(tableId: string, row: number, col: number, widgetId: string): void;
+  setTableCellText(tableId: string, row: number, col: number, text: string): void;
+  getTableCellText(tableId: string, row: number, col: number): string;
+}
+
+const AppState: AppState = {
   currentTab: 2,
 };
 
-export const Utils = {
+export const Utils: UtilsType = {
   /**
    * 加载 CSV 到表格，并支持指定单元格可编辑
-   * @param {string} csvPath - CSV 文件路径
-   * @param {string} tableId - 表格 ID
-   * @param {number} rows - 行数
-   * @param {number} cols - 列数
-   * @param {Array<{row: number, col: number}>} editableCells - 可编辑的单元格列表，例如 [{row: 0, col: 1}, {row: 3, col: 1}]
    */
-  async loadCSVToTable(csvPath, tableId, rows, cols, editableCells = []) {
+  async loadCSVToTable(csvPath: string, tableId: string, rows: number, cols: number, editableCells: EditableCell[] = []): Promise<void> {
     try {
       const response = await fetch(csvPath);
       const csvText = await response.text();
       const lines = csvText.trim().split("\n");
 
-      const table = document.getElementById(tableId);
+      const table = document.getElementById(tableId) as HTMLTableElement | null;
       if (!table) {
         console.error(`Table ${tableId} not found`);
         return;
@@ -73,10 +104,10 @@ export const Utils = {
                 td.style.border = "1px solid #ccc";
 
                 // 可选：添加焦点样式
-                td.addEventListener("focus", function () {
+                td.addEventListener("focus", function (this: HTMLElement) {
                   this.style.backgroundColor = "#fffacd";
                 });
-                td.addEventListener("blur", function () {
+                td.addEventListener("blur", function (this: HTMLElement) {
                   this.style.backgroundColor = "#fff8dc";
                 });
               }
@@ -91,22 +122,15 @@ export const Utils = {
 
   /**
    * 获取可编辑单元格的值，返回 Map（以 "row,col" 字符串为键）
-   * @param {string} tableId
-   * @param {Array<{row: number, col: number}>} editableCells
-   * @returns {Map<string, string>} - Map<"row,col", value>
-   *
-   * @example
-   * const map = Utils.getEditableCellsAsPositionMap("tableWidget_CSZD", editableCells_CSZD);
-   * const val = map.get("3,1"); // 获取第3行第1列的值
    */
-  getEditableCellsAsPositionMap(tableId, editableCells) {
-    const table = document.getElementById(tableId);
+  getEditableCellsAsPositionMap(tableId: string, editableCells: EditableCell[]): Map<string, string> {
+    const table = document.getElementById(tableId) as HTMLTableElement | null;
     if (!table) {
       console.error(`Table ${tableId} not found`);
       return new Map();
     }
 
-    const map = new Map();
+    const map = new Map<string, string>();
 
     editableCells.forEach(({ row, col }) => {
       const tr = table.rows[row];
@@ -116,8 +140,8 @@ export const Utils = {
       if (!td) return;
 
       // 处理可能包含 input 元素的情况
-      const input = td.querySelector("input");
-      const value = input ? input.value.trim() : td.textContent.trim();
+      const input = td.querySelector("input") as HTMLInputElement | null;
+      const value = input ? input.value.trim() : (td.textContent ?? "").trim();
 
       // [STAR] 使用 "row,col" 作为键
       map.set(`${row},${col}`, value);
@@ -128,11 +152,9 @@ export const Utils = {
 
   /**
    * 设置表格中指定单元格为可编辑
-   * @param {string} tableId - 表格 ID
-   * @param {Array<{row: number, col: number}>} editableCells - 可编辑单元格列表
    */
-  setEditableCells(tableId, editableCells) {
-    const table = document.getElementById(tableId);
+  setEditableCells(tableId: string, editableCells: EditableCell[]): void {
+    const table = document.getElementById(tableId) as HTMLTableElement | null;
     if (!table) {
       console.error(`Table ${tableId} not found`);
       return;
@@ -148,10 +170,10 @@ export const Utils = {
           td.style.cursor = "text";
           td.style.border = "1px solid #ccc";
 
-          td.addEventListener("focus", function () {
+          td.addEventListener("focus", function (this: HTMLElement) {
             this.style.backgroundColor = "#fffacd";
           });
-          td.addEventListener("blur", function () {
+          td.addEventListener("blur", function (this: HTMLElement) {
             this.style.backgroundColor = "#fff8dc";
           });
         }
@@ -161,10 +183,8 @@ export const Utils = {
 
   /**
    *  CSV 解析
-   * @param {string} text - CSV 文本内容
-   * @returns {Array<Array<string>>}
    */
-  parseCSV(text) {
+  parseCSV(text: string): string[][] {
     const lines = text.trim().split("\n");
     return lines.map((line) => {
       // 按逗号分割（不处理引号内的逗号）
@@ -174,25 +194,21 @@ export const Utils = {
 
   /**
    * 保存表格数据到 CSV 文件
-   * @param {string} tableId - 表格 ID
-   * @param {string} fileName - 文件名
-   * @param {number} rows - 行数
-   * @param {number} cols - 列数
    */
-  saveTableToCSV(tableId, fileName, rows, cols) {
-    const table = document.getElementById(tableId);
+  saveTableToCSV(tableId: string, fileName: string, rows: number, cols: number): void {
+    const table = document.getElementById(tableId) as HTMLTableElement | null;
     if (!table) return;
 
     let csvContent = "";
 
     for (let i = 0; i < rows && i < table.rows.length; i++) {
       const row = table.rows[i];
-      const rowData = [];
+      const rowData: string[] = [];
 
       for (let j = 0; j < cols && j < row.cells.length; j++) {
         const cell = row.cells[j];
-        const input = cell.querySelector("input, textarea");
-        const value = input ? input.value : cell.textContent;
+        const input = cell.querySelector("input, textarea") as HTMLInputElement | HTMLTextAreaElement | null;
+        const value = input ? input.value : (cell.textContent ?? "");
         rowData.push(value);
       }
 
@@ -212,11 +228,11 @@ export const Utils = {
   /**
    * 设置单元格只读
    */
-  setTableCellReadonly(tableId, row, col) {
-    const table = document.getElementById(tableId);
+  setTableCellReadonly(tableId: string, row: number, col: number): void {
+    const table = document.getElementById(tableId) as HTMLTableElement | null;
     if (table && table.rows[row] && table.rows[row].cells[col]) {
       const cell = table.rows[row].cells[col];
-      const input = cell.querySelector("input, textarea");
+      const input = cell.querySelector("input, textarea") as HTMLInputElement | HTMLTextAreaElement | null;
       if (input) {
         input.readOnly = true;
         input.style.backgroundColor = "#e0e0e0";
@@ -231,8 +247,8 @@ export const Utils = {
   /**
    * 表格居中对齐
    */
-  centerAlignTable(tableId) {
-    const table = document.getElementById(tableId);
+  centerAlignTable(tableId: string): void {
+    const table = document.getElementById(tableId) as HTMLTableElement | null;
     if (table) {
       Array.from(table.rows).forEach((row) => {
         Array.from(row.cells).forEach((cell) => {
@@ -246,8 +262,8 @@ export const Utils = {
   /**
    * 设置表格列自适应拉伸
    */
-  stretchTableColumns(tableId) {
-    const table = document.getElementById(tableId);
+  stretchTableColumns(tableId: string): void {
+    const table = document.getElementById(tableId) as HTMLTableElement | null;
     if (table) {
       table.style.width = "100%";
       table.style.tableLayout = "auto";
@@ -257,8 +273,8 @@ export const Utils = {
   /**
    * 在表格单元格中嵌入控件
    */
-  setCellWidget(tableId, row, col, widgetId) {
-    const table = document.getElementById(tableId);
+  setCellWidget(tableId: string, row: number, col: number, widgetId: string): void {
+    const table = document.getElementById(tableId) as HTMLTableElement | null;
     const widget = document.getElementById(widgetId);
 
     if (table && widget && table.rows[row] && table.rows[row].cells[col]) {
@@ -274,13 +290,9 @@ export const Utils = {
   },
   /**
    * 设置表格单元格文本内容
-   * @param {string} tableId - 表格 ID
-   * @param {number} row - 行索引（从 0 开始）
-   * @param {number} col - 列索引（从 0 开始）
-   * @param {string} text - 要设置的文本
    */
-  setTableCellText(tableId, row, col, text) {
-    const table = document.getElementById(tableId);
+  setTableCellText(tableId: string, row: number, col: number, text: string): void {
+    const table = document.getElementById(tableId) as HTMLTableElement | null;
     if (!table) {
       console.warn(`[WARN] 表格未找到: ${tableId}`);
       return;
@@ -299,7 +311,7 @@ export const Utils = {
     }
 
     // 如果单元格中有 input/textarea，更新其 value
-    const input = cell.querySelector("input, textarea");
+    const input = cell.querySelector("input, textarea") as HTMLInputElement | HTMLTextAreaElement | null;
     if (input) {
       input.value = text;
     } else {
@@ -309,13 +321,9 @@ export const Utils = {
   },
   /**
    * 获取表格单元格文本内容（新增方法）
-   * @param {string} tableId - 表格 ID
-   * @param {number} row - 行索引（从 0 开始）
-   * @param {number} col - 列索引（从 0 开始）
-   * @returns {string} - 单元格文本
    */
-  getTableCellText(tableId, row, col) {
-    const table = document.getElementById(tableId);
+  getTableCellText(tableId: string, row: number, col: number): string {
+    const table = document.getElementById(tableId) as HTMLTableElement | null;
     if (!table) {
       console.warn(`[WARN] 表格未找到: ${tableId}`);
       return "";
@@ -328,13 +336,13 @@ export const Utils = {
     if (!cell) return "";
 
     // 优先读取 input/textarea 的值，否则读取 textContent
-    const input = cell.querySelector("input, textarea, select");
-    return input ? input.value : cell.textContent;
+    const input = cell.querySelector("input, textarea, select") as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null;
+    return input ? input.value : (cell.textContent ?? "");
   },
 };
 
 // 设置 LED 状态
-export function setLEDStatus(elementId, isActive) {
+export function setLEDStatus(elementId: string, isActive: boolean): void {
   const element = document.getElementById(elementId);
   if (element) {
     element.style.width = "20px";
@@ -346,7 +354,7 @@ export function setLEDStatus(elementId, isActive) {
   }
 }
 
-function initializeLEDIndicators() {
+function initializeLEDIndicators(): void {
   setLEDStatus("label_led_HWCSZT", false);
   setLEDStatus("label_led_HWJH", false);
   setLEDStatus("label_led_HWGZ", false);
@@ -363,39 +371,39 @@ function initializeLEDIndicators() {
   setLEDStatus("label_led_CGZT", false);
 }
 
-function initializeRadioGroups() {
+function initializeRadioGroups(): void {
   // 近界/远界
-  const radioJJ = document.getElementById("radioButton_JJ");
+  const radioJJ = document.getElementById("radioButton_JJ") as HTMLInputElement | null;
   if (radioJJ) radioJJ.checked = true;
 
   // 无前发/有前发
-  const radioWQF = document.getElementById("radioButton_WQF");
+  const radioWQF = document.getElementById("radioButton_WQF") as HTMLInputElement | null;
   if (radioWQF) radioWQF.checked = true;
 
   // 无干扰/有干扰
-  const radioWGR = document.getElementById("radioButton_WGR");
+  const radioWGR = document.getElementById("radioButton_WGR") as HTMLInputElement | null;
   if (radioWGR) radioWGR.checked = true;
 
   // 航路
-  const radioLHL = document.getElementById("radioButton_LHL");
+  const radioLHL = document.getElementById("radioButton_LHL") as HTMLInputElement | null;
   if (radioLHL) radioLHL.checked = true;
 
   // 迎攻/尾追/未知
-  const radioUnKnown = document.getElementById("radioButton_UnKnown");
+  const radioUnKnown = document.getElementById("radioButton_UnKnown") as HTMLInputElement | null;
   if (radioUnKnown) radioUnKnown.checked = true;
 
   // 工作状态
   const initialStateRadio = document.getElementById(
     "radioButton_initial_state",
-  );
+  ) as HTMLInputElement | null;
   if (initialStateRadio) initialStateRadio.checked = true;
 
   // 激光工作状态
-  const fsjsbkqRadio = document.getElementById("radioButton_FSJSBKQ");
+  const fsjsbkqRadio = document.getElementById("radioButton_FSJSBKQ") as HTMLInputElement | null;
   if (fsjsbkqRadio) fsjsbkqRadio.checked = true;
 }
 
-window.showTab = function (index) {
+window.showTab = function (index: number): void {
   document.querySelectorAll(".tab-content").forEach((tab) => {
     tab.classList.remove("active");
   });
@@ -403,35 +411,35 @@ window.showTab = function (index) {
     btn.classList.remove("active");
   });
 
-  document.getElementById("tab-" + index).classList.add("active");
+  document.getElementById("tab-" + index)!.classList.add("active");
   const activeBtn = document.querySelector(`.tab-btn[data-tab="${index}"]`);
   if (activeBtn) activeBtn.classList.add("active");
   AppState.currentTab = index;
 };
 
-function initializeTables() {
+function initializeTables(): void {
   initializeInfraredTables();
   initializeLaserTables();
   initializeCommandTables();
   initializeChart();
 }
 
-document.addEventListener("DOMContentLoaded", async function () {
+document.addEventListener("DOMContentLoaded", async function (): Promise<void> {
   initializeTables();
   initializeRadioGroups();
   initializeLEDIndicators();
   initializeUploadImage();
   initializeVideoStream();
-    initializeBinarizedStream(); 
+    initializeBinarizedStream();
     initializeCodeUpload();
     initializeTelemeter();
     initializeDataRouter();
     initializeYC();
     initTurntableUI();
-  showTab(2); // 默认显示
+  window.showTab(2); // 默认显示
 
   statusBar.init();
-  // 
+  //
   document.getElementById("pushButton_18")?.addEventListener("click", () => {
     statusBar.clear();
   });
