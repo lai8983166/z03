@@ -22,10 +22,19 @@ const WS_PORT_IMG = cfg.ws.portImg; // 图像上传专用 WebSocket 端口
 // Bridge / 图像上传配置已迁 bridges 模块（cfg.bridges / cfg.imageUpload）
 
 // ==================== HTTP 服务器====================
+// 静态服务策略：
+// - "/" 或 "/index.html" → ./dist/index.html（vite build 产物）
+// - "/assets/*" → ./dist/assets/*（vite build 编译后的 JS/CSS 带 hash）
+// - 其他（/csv/*、/node_modules/*、/style.css 等）→ 项目根（"." + url）
+// 开发模式下（npm run dev），vite dev :5173 代理 /csv 到 :8080，行为等价。
 const server = http.createServer((req, res) => {
-  let filePath = "." + req.url;
-  if (filePath === "./") {
-    filePath = "./index.html";
+  let filePath: string;
+  if (req.url === "/" || req.url === "/index.html") {
+    filePath = "./dist/index.html";
+  } else if (req.url?.startsWith("/assets/")) {
+    filePath = "./dist" + req.url;
+  } else {
+    filePath = "." + (req.url ?? "/");
   }
 
   const extname = String(path.extname(filePath)).toLowerCase();
